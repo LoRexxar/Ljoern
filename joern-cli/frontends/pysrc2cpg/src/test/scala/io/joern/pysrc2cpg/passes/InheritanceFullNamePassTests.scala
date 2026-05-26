@@ -26,8 +26,8 @@ class InheritanceFullNamePassTests extends PySrc2CpgFixture(withOssDataflow = fa
 
     "resolve the type being inherited fully" in {
       def bar = cpg.typeDecl("Bar")
-      bar.inheritsFromTypeFullName.l shouldBe Seq("foo.py:<module>.Foo")
-      bar.baseType.fullName.l shouldBe Seq("foo.py:<module>.Foo")
+      bar.inheritsFromTypeFullName.l shouldBe Seq("foo.Foo")
+      bar.baseType.fullName.l shouldBe Seq("foo.Foo")
     }
   }
 

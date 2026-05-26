@@ -22,6 +22,15 @@ null
 /gnupg-*
 /joern-cli/${sys:LOG_DIR}/
 .local
+.jdk/
+.home/
+.tmp/
+.coursier-cache/
+*.log
+hs_err_pid*.log
+.env
+.env.*
+!.env.example
 **/astgen-win.exe
 **/astgen-macos
 **/astgen-macos-arm

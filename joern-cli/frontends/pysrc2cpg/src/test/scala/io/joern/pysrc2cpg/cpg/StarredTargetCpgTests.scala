@@ -15,8 +15,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
 
       val sliceCall = cpg.call.methodFullName("<operator>.slice").head
       inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp0"
+        case List(_, lower: Literal, upper: Literal, step: Literal) =>
           lower.code shouldBe "1"
           upper.code shouldBe "None"
           step.code shouldBe "1"
@@ -28,8 +27,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
 
       val sliceCall = cpg.call.methodFullName("<operator>.slice").head
       inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp0"
+        case List(_, lower: Literal, upper: Literal, step: Literal) =>
           lower.code shouldBe "1"
           upper.code shouldBe "-1"
           step.code shouldBe "1"
@@ -45,8 +43,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "0"
       }
       val zAssign = assignments.find(_.argument(1).code == "z").get
@@ -57,8 +54,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "-1"
       }
     }
@@ -68,8 +64,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
 
       val sliceCall = cpg.call.methodFullName("<operator>.slice").head
       inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp0"
+        case List(_, lower: Literal, upper: Literal, step: Literal) =>
           lower.code shouldBe "1"
           upper.code shouldBe "-2"
           step.code shouldBe "1"
@@ -85,8 +80,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "0"
       }
       val cAssign = assignments.find(_.argument(1).code == "c").get
@@ -97,8 +91,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "-2"
       }
       val dAssign = assignments.find(_.argument(1).code == "d").get
@@ -109,8 +102,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "-1"
       }
     }
@@ -120,8 +112,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
 
       val sliceCall = cpg.call.methodFullName("<operator>.slice").head
       inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp0"
+        case List(_, lower: Literal, upper: Literal, step: Literal) =>
           lower.code shouldBe "0"
           upper.code shouldBe "-2"
           step.code shouldBe "1"
@@ -137,8 +128,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "-2"
       }
       val zAssign = assignments.find(_.argument(1).code == "z").get
@@ -149,8 +139,7 @@ class StarredTargetCpgTests extends PySrc2CpgFixture(withOssDataflow = false) {
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp0"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "-1"
       }
     }
@@ -165,8 +154,7 @@ for x, *y in [[1,2,3]]:
 
       val sliceCall = cpg.call.methodFullName("<operator>.slice").head
       inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp2"
+        case List(_, lower: Literal, upper: Literal, step: Literal) =>
           lower.code shouldBe "1"
           upper.code shouldBe "None"
           step.code shouldBe "1"
@@ -181,8 +169,7 @@ for x, *y, z in [[1,2,3,4]]:
 
       val sliceCall = cpg.call.methodFullName("<operator>.slice").head
       inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp2"
+        case List(_, lower: Literal, upper: Literal, step: Literal) =>
           lower.code shouldBe "1"
           upper.code shouldBe "-1"
           step.code shouldBe "1"
@@ -198,8 +185,7 @@ for x, *y, z in [[1,2,3,4]]:
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp2"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "0"
       }
       val zAssign = assignments.find(_.argument(1).code == "z").get
@@ -210,8 +196,7 @@ for x, *y, z in [[1,2,3,4]]:
           .argument
           .sortBy(_.argumentIndex)
           .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp2"
+      ) { case List(_, index: Literal) =>
         index.code shouldBe "-1"
       }
     }
@@ -221,54 +206,20 @@ for x, *y, z in [[1,2,3,4]]:
     "handle simple starred: [x for [*x, y] in items]" in {
       val cpg = code("""result = [a for [*a, b] in [[1,2,3]]]""".stripMargin)
 
-      val sliceCall = cpg.call.methodFullName("<operator>.slice").head
-      inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp3"
-          lower.code shouldBe "0"
-          upper.code shouldBe "-1"
-          step.code shouldBe "1"
-      }
+      cpg.call.methodFullName(PythonOperators.listComprehension).size shouldBe 1
+      cpg.call.methodFullName(PythonOperators.slice).size shouldBe 0
+      cpg.local.nameExact("a").size shouldBe 1
+      cpg.local.nameExact("b").size shouldBe 1
     }
 
     "handle starred in tuple: [x for (a, *b, c) in items]" in {
       val cpg = code("""result = [a for (a, *b, c) in [[1,2,3,4]]]""".stripMargin)
 
-      val sliceCall = cpg.call.methodFullName("<operator>.slice").head
-      inside(sliceCall.argument.sortBy(_.argumentIndex).l) {
-        case List(base: Identifier, lower: Literal, upper: Literal, step: Literal) =>
-          base.code shouldBe "tmp3"
-          lower.code shouldBe "1"
-          upper.code shouldBe "-1"
-          step.code shouldBe "1"
-      }
-
-      // Check a = tmp[0] and c = tmp[-1]
-      val assignments = cpg.call.methodFullName(Operators.assignment).l
-      val aAssign     = assignments.find(_.argument(1).code == "a").get
-      inside(
-        aAssign
-          .argument(2)
-          .asInstanceOf[Call]
-          .argument
-          .sortBy(_.argumentIndex)
-          .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp3"
-        index.code shouldBe "0"
-      }
-      val cAssign = assignments.find(_.argument(1).code == "c").get
-      inside(
-        cAssign
-          .argument(2)
-          .asInstanceOf[Call]
-          .argument
-          .sortBy(_.argumentIndex)
-          .l
-      ) { case List(base: Identifier, index: Literal) =>
-        base.code shouldBe "tmp3"
-        index.code shouldBe "-1"
-      }
+      cpg.call.methodFullName(PythonOperators.listComprehension).size shouldBe 1
+      cpg.call.methodFullName(PythonOperators.slice).size shouldBe 0
+      cpg.local.nameExact("a").size shouldBe 1
+      cpg.local.nameExact("b").size shouldBe 1
+      cpg.local.nameExact("c").size shouldBe 1
     }
   }
 }

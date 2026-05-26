@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>php2cpg vs pysrc2cpg（当前版本）：节点与属性差异对比</title>
+    <style>
+      :root {
+        --bg: #0b0d12;
+        --panel: #111522;
+        --panel2: #0f1320;
+        --text: #e8ecff;
+        --muted: #aab3d0;
+        --border: #232a44;
+        --accent: #7aa2ff;
+        --good: #38d996;
+        --warn: #ffbf69;
+        --bad: #ff6b6b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: radial-gradient(1200px 900px at 20% -10%, rgba(122, 162, 255, 0.18), transparent 55%),
+          radial-gradient(900px 700px at 110% 20%, rgba(56, 217, 150, 0.10), transparent 55%),
+          var(--bg);
+        color: var(--text);
+        font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+          "Segoe UI Emoji";
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      header {
+        padding: 22px 18px 14px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+        background: linear-gradient(180deg, rgba(17, 21, 34, 0.85), rgba(17, 21, 34, 0.35));
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(10px);
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      .title {
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+        letter-spacing: 0.2px;
+      }
+      .subtitle {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .input, .btn, .toggle {
+        border: 1px solid var(--border);
+        background: rgba(17, 21, 34, 0.72);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 10px 12px;
+        outline: none;
+      }
+      .input::placeholder { color: rgba(170, 179, 208, 0.75); }
+      .btn {
+        cursor: pointer;
+        background: linear-gradient(180deg, rgba(122, 162, 255, 0.18), rgba(122, 162, 255, 0.10));
+      }
+      .btn:hover { border-color: rgba(122, 162, 255, 0.55); }
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        user-select: none;
+        cursor: pointer;
+        background: rgba(17, 21, 34, 0.48);
+      }
+      .toggle input { width: 16px; height: 16px; margin: 0; }
+      main { padding: 16px 18px 36px; }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 14px 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .pill {
+        border: 1px solid var(--border);
+        background: rgba(17, 21, 34, 0.55);
+        border-radius: 999px;
+        padding: 6px 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .dot.good { background: var(--good); }
+      .dot.warn { background: var(--warn); }
+      .dot.bad { background: var(--bad); }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 12px;
+      }
+      .card {
+        grid-column: span 12;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(17, 21, 34, 0.70), rgba(15, 19, 32, 0.62));
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .cardHead {
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      .cardTitle {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .nodeType {
+        font-weight: 650;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+      }
+      .severity {
+        font-size: 12px;
+        border: 1px solid var(--border);
+        padding: 4px 9px;
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgba(0,0,0,0.18);
+        white-space: nowrap;
+      }
+      .severity.good { border-color: rgba(56, 217, 150, 0.4); color: rgba(56, 217, 150, 0.95); }
+      .severity.warn { border-color: rgba(255, 191, 105, 0.45); color: rgba(255, 191, 105, 0.95); }
+      .severity.bad { border-color: rgba(255, 107, 107, 0.5); color: rgba(255, 107, 107, 0.95); }
+      .cardBody { padding: 12px 14px 14px; }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 980px) {
+        .controls { grid-template-columns: 1fr 1fr; }
+        .grid2 { grid-template-columns: 1fr; }
+      }
+      .box {
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px;
+        padding: 10px 11px;
+        background: rgba(0,0,0,0.16);
+      }
+      .box h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        letter-spacing: 0.2px;
+        color: var(--muted);
+        font-weight: 650;
+        text-transform: uppercase;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 6px 10px;
+        align-items: start;
+      }
+      @media (max-width: 560px) {
+        .kv { grid-template-columns: 1fr; }
+      }
+      .k { color: rgba(170, 179, 208, 0.95); }
+      .v { color: rgba(232, 236, 255, 0.96); white-space: pre-wrap; word-break: break-word; }
+      .diff {
+        margin-top: 10px;
+        border-top: 1px dashed rgba(255,255,255,0.10);
+        padding-top: 10px;
+        color: rgba(232, 236, 255, 0.92);
+      }
+      .diff ul { margin: 8px 0 0; padding-left: 18px; }
+      .diff li { margin: 4px 0; color: rgba(232, 236, 255, 0.9); }
+      .refs { margin-top: 10px; color: var(--muted); font-size: 12px; }
+      .refs a { margin-right: 10px; }
+      .count {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .footer {
+        margin-top: 16px;
+        color: rgba(170, 179, 208, 0.75);
+        font-size: 12px;
+      }
+      code.inline {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        background: rgba(0,0,0,0.25);
+        border: 1px solid rgba(255,255,255,0.10);
+        padding: 2px 6px;
+        border-radius: 8px;
+        color: rgba(232, 236, 255, 0.98);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <div class="title">
+          <h1>php2cpg vs pysrc2cpg（当前版本）：节点与属性差异对比</h1>
+        </div>
+        <div class="subtitle">
+          版本说明：pysrc2cpg 已完成 Phase B fullName 重写（module-based fullName，CALL.name/methodFullName 解耦，CALL 兜底采用 module-based guess，避免 &lt;unresolvedNamespace&gt;）。
+        </div>
+        <div class="controls">
+          <input id="q" class="input" placeholder="搜索节点类型/差异关键词（例如 METHOD、methodFullName、root、imports、TypeNodePass）" />
+          <label class="toggle"><input id="onlyDiff" type="checkbox" checked />只看差异明显</label>
+          <label class="toggle"><input id="group" type="checkbox" />按严重度分组</label>
+          <button id="reset" class="btn">重置</button>
+        </div>
+        <div class="legend">
+          <span class="pill"><span class="dot good"></span>差异小（基本一致）</span>
+          <span class="pill"><span class="dot warn"></span>差异中（字段缺失/策略不同）</span>
+          <span class="pill"><span class="dot bad"></span>差异大（会影响对齐重构与跨语言查询）</span>
+        </div>
+      </div>
+    </header>
+    <main>
+      <div class="wrap">
+        <div id="count" class="count"></div>
+        <div id="cards" class="cards"></div>
+        <div class="footer">
+          说明：Python 前端对应仓库中的 <code class="inline">pysrc2cpg</code>；对齐参照为 <code class="inline">php2cpg</code> 的命名/作用域/兜底策略。
+        </div>
+      </div>
+    </main>
+    <script>
+      const data = [
+        {
+          nodeType: "META_DATA",
+          severity: "warn",
+          python: {
+            "生成入口": "MetaDataPass(outputCpg, PYTHONSRC, inputPath)",
+            "language": "PYTHONSRC",
+            "root": "绝对路径（MetaDataPass 规范化）",
+            "version": "package implementationVersion"
+          },
+          php: {
+            "生成入口": "MetaDataPass(cpg, PHP, inputPath)",
+            "language": "PHP",
+            "root": "绝对路径（MetaDataPass 规范化）",
+            "version": "package implementationVersion"
+          },
+          diffs: [
+            "两者都已走 MetaDataPass，root 规范化一致；差异主要转移到 fullName/调用解析层。"
+          ],
+          refs: {
+            "Py2Cpg.buildCpg": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/Py2Cpg.scala#L25-L32",
+            "MetaDataPass": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/passes/frontend/MetaDataPass.scala#L15-L38",
+            "Php2Cpg.createCpg": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/Php2Cpg.scala#L55-L73"
+          }
+        },
+        {
+          nodeType: "FILE",
+          severity: "good",
+          python: {
+            "生成入口": "PythonAstVisitor.convert(module)",
+            "name": "relFileName（相对 input-dir）",
+            "content": "enableFileContent 时写入"
+          },
+          php: {
+            "生成入口": "AstCreator.astForPhpFile",
+            "name": "relativeFileName（相对 input-dir）",
+            "content": "disableFileContent=false 时写入"
+          },
+          diffs: [
+            "两者基本一致。"
+          ],
+          refs: {
+            "PythonAstVisitor.convert": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/PythonAstVisitor.scala#L82-L100",
+            "php AstCreator": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/astcreation/AstCreator.scala#L82-L111"
+          }
+        },
+        {
+          nodeType: "NAMESPACE_BLOCK（文件级 <global>）",
+          severity: "warn",
+          python: {
+            "生成入口": "PythonAstVisitor.convert(module)",
+            "name": "<global>",
+            "fullName": "<file>:<global>",
+            "filename": "<file>",
+            "order": "未设置"
+          },
+          php: {
+            "生成入口": "AstCreatorBase.globalNamespaceBlock()",
+            "name": "<global>",
+            "fullName": "MetaDataPass.getGlobalNamespaceBlockFullName(Some(file)) ⇒ <file>:<global>",
+            "filename": "<file>",
+            "order": "1"
+          },
+          diffs: [
+            "pysrc2cpg 的 namespaceBlock 仍未设置 order（php/x2cpg 通常为 1）。"
+          ],
+          refs: {
+            "py namespaceBlock": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/PythonAstVisitor.scala#L90-L97",
+            "AstCreatorBase.globalNamespaceBlock": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstCreatorBase.scala#L19-L29"
+          }
+        },
+        {
+          nodeType: "METHOD",
+          severity: "bad",
+          python: {
+            "fullName 规则": "module-based：<moduleFullName>.[qualName.]<name>",
+            "moduleFullName": "由 relFileName 推导（pkg/sub/mod.py -> pkg.sub.mod；__init__.py -> pkg）",
+            "去重": "$redefinitionN（沿用现有策略）",
+            "code": "目前为占位 def name(...)（不含参数展开）",
+            "signature": "空字符串",
+            "astParentType/astParentFullName": "多数场景仍缺失/弱化"
+          },
+          php: {
+            "fullName 规则": "scope + namespace/import + 去重（composeMethodFullName）",
+            "namespace 分隔": "namespace 用 \\\\；方法/类型用 .",
+            "去重": "<duplicate>n",
+            "code": "更接近源码（function/method 定义文本）",
+            "signature": "多为 None（少数特殊方法填默认值）",
+            "astParentType/astParentFullName": "更完整（scope.getEnclosingParentInfo）"
+          },
+          diffs: [
+            "pysrc2cpg 已不再使用 <file>:<module> 前缀，而是 module-based；php2cpg 仍以 namespace/type 上下文拼装 fullName。",
+            "pysrc2cpg 的 code/signature 仍偏“占位”，php2cpg 更接近源码或保持 None。",
+            "pysrc2cpg 的 astParent* 仍是主要差距点之一（影响跨语言一致性与某些查询）。"
+          ],
+          refs: {
+            "ModuleFullName": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/ModuleFullName.scala#L1-L23",
+            "py fullNameOfDecl": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/PythonAstVisitor.scala#L2203-L2216",
+            "php composeMethodFullName": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/astcreation/AstCreatorHelper.scala#L55-L75",
+            "php getAstParentInfo": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/astcreation/AstCreatorHelper.scala#L84-L95"
+          }
+        },
+        {
+          nodeType: "METHOD_PARAMETER_IN",
+          severity: "warn",
+          python: {
+            "生成入口": "NodeBuilder.methodParameterNode",
+            "index/order": "存在不完全一致场景（部分参数缺 order 约束）",
+            "typeFullName": "type hint 或 ANY",
+            "evaluationStrategy": "BY_SHARING"
+          },
+          php: {
+            "生成入口": "AstNodeBuilder.parameterInNode",
+            "index/order": "通常总是设置且一致",
+            "typeFullName": "ANY 或更具体",
+            "evaluationStrategy": "BY_SHARING（常见）"
+          },
+          diffs: [
+            "pysrc2cpg 的参数顺序字段仍需要进一步强约束，才能与 php2cpg 的“稳定可遍历”行为完全一致。"
+          ],
+          refs: {
+            "py methodParameterNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L144-L164",
+            "AstNodeBuilder.parameterInNode": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstNodeBuilder.scala#L208-L230"
+          }
+        },
+        {
+          nodeType: "METHOD_RETURN",
+          severity: "good",
+          python: {
+            "evaluationStrategy": "BY_VALUE（已对齐 x2cpg 默认）",
+            "typeFullName": "hint 或 ANY"
+          },
+          php: {
+            "evaluationStrategy": "BY_VALUE（x2cpg 默认）",
+            "typeFullName": "hint 或 ANY"
+          },
+          diffs: [
+            "Phase A 已对齐 evaluationStrategy；当前差异很小。"
+          ],
+          refs: {
+            "py methodReturnNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L189-L206",
+            "AstNodeBuilder.methodReturnNode": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstNodeBuilder.scala#L379-L387"
+          }
+        },
+        {
+          nodeType: "TYPE_DECL",
+          severity: "warn",
+          python: {
+            "fullName 规则": "<moduleFullName>.<TypeName>[<meta>…]",
+            "code": "通常不填",
+            "inheritsFromTypeFullName": "支持（后处理会补全 fullName）"
+          },
+          php: {
+            "fullName 规则": "namespace/type 上下文 + 去重",
+            "code": "多数场景有值（name 或更完整）",
+            "inheritsFromTypeFullName": "支持"
+          },
+          diffs: [
+            "pysrc2cpg 已切换到 module-based TYPE_DECL.fullName，但 TYPE_DECL.code/astParent* 仍弱于 php2cpg。"
+          ],
+          refs: {
+            "py typeDeclNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L48-L76",
+            "php typeDecl naming": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/utils/Scope.scala#L189-L206"
+          }
+        },
+        {
+          nodeType: "TYPE",
+          severity: "warn",
+          python: {
+            "生成入口": "PyTypeNodePass.withTypesFromCpg",
+            "shortName": "fullName 先 split(':') 再 split('.') 取最后段",
+            "策略": "从 TYPE_DECL.fullName + 全图 typeFullName 汇总 + ANY"
+          },
+          php: {
+            "生成入口": "TypeNodePass.withTypesFromCpg",
+            "shortName": "默认 fullToShortName（适配多数语言）",
+            "策略": "从全图 typeFullName + inheritsFrom 汇总"
+          },
+          diffs: [
+            "pysrc2cpg 需要自定义 shortName 规则以适配 Python fullName 形态（已落地为 PyTypeNodePass）。",
+            "php2cpg 直接使用 x2cpg 的 TypeNodePass。"
+          ],
+          refs: {
+            "PyTypeNodePass": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/PyTypeNodePass.scala#L12-L51",
+            "TypeNodePass": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/passes/frontend/TypeNodePass.scala#L38-L57"
+          }
+        },
+        {
+          nodeType: "CALL",
+          severity: "bad",
+          python: {
+            "name vs methodFullName": "已解耦：CALL.name 保持短名；CALL.methodFullName 独立设置",
+            "默认解析": "import 命中/同模块顶层函数/顶层类（构造）可填；否则 module-based guess（<moduleFullName>.<name> 或 <moduleFullName>.<base>.<attr>）",
+            "dispatchType": "源代码调用多数为 DYNAMIC_DISPATCH（不冒充可静态分发）",
+            "staticReceiver": "未填",
+            "signature": "空字符串"
+          },
+          php: {
+            "默认解析": "getMfn：import/符号表命中优先；否则按 namespace/type 前缀；无法解析则 <unresolvedNamespace>.<name>",
+            "dispatchType": "静态/动态根据 target 与语法决定",
+            "staticReceiver": "静态调用可设置（Foo::bar / self::bar）",
+            "signature": "多为 None（operator call 例外）"
+          },
+          diffs: [
+            "pysrc2cpg 的 CALL.methodFullName 解析目前更保守，主要覆盖 import 与同模块顶层声明；php2cpg 通过 scope/summary 覆盖更广。",
+            "pysrc2cpg 尚未提供 staticReceiver；php2cpg 对静态方法调用有明确的 staticReceiver 语义。",
+            "pysrc2cpg 不使用 <unresolvedNamespace>，统一采用 module-based guess；其中 x.y() base 无法解析时保留 base 原名（<moduleFullName>.<x>.<y>）。"
+          ],
+          refs: {
+            "py callNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L18-L37",
+            "py createCall": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/PythonAstVisitorHelpers.scala#L349-L388",
+            "php getMfn": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/astcreation/AstCreatorHelper.scala#L281-L302",
+            "php astForCall": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/astcreation/AstForExpressionsCreator.scala#L60-L154"
+          }
+        },
+        {
+          nodeType: "IMPORT / 引用解析（tag nodes）",
+          severity: "bad",
+          python: {
+            "AST import": "PythonAstVisitor.convert(Import/ImportFrom) 会写入 PythonScope.imports（用于 CALL.methodFullName 早期解析）",
+            "ImportResolver": "PythonImportResolverPass 会把 importCall tag 成 Resolved/Unknown import（供后处理与查询）",
+            "pseudo import": "UnknownImport/UnknownTypeDecl/UnknownMethod 的 fullName 已切换为 module-based"
+          },
+          php: {
+            "预扫描": "SymbolSummaryPass 预扫描符号（影响 resolveFunctionIdentifier）",
+            "import": "use/import 进入 Scope.importedSymbols，影响 composeMethodFullName/getMfn",
+            "unresolved": "默认 <unresolvedNamespace>.<name>（动态调用/外部链式调用）"
+          },
+          diffs: [
+            "pysrc2cpg 现在同时存在“AST 阶段 scope.imports”与“ImportResolverPass tag”两套机制；php2cpg 主要以 Scope + SymbolSummaryPass 驱动。",
+            "pysrc2cpg pseudo import 的字符串格式已破坏兼容（去掉 .py:<module>），与新的 module-based fullName 一致。"
+          ],
+          refs: {
+            "PythonScope": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/PythonScope.scala#L7-L26",
+            "PythonImportResolverPass": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/frontendspecific/pysrc2cpg/PythonImportResolverPass.scala#L55-L124",
+            "php SymbolSummaryPass": "file:///d:/program/Ljoern/joern-cli/frontends/php2cpg/src/main/scala/io/joern/php2cpg/passes/SymbolSummaryPass.scala#L18-L88"
+          }
+        },
+        {
+          nodeType: "LOCAL",
+          severity: "warn",
+          python: {
+            "pos": "多数 local 不写 line/col/offset",
+            "closureBindingId": "支持"
+          },
+          php: {
+            "pos": "一般写 line/col/offset",
+            "closureBindingId": "支持"
+          },
+          diffs: [
+            "pysrc2cpg 的 local 位置信息仍偏弱，影响源码映射、导出与一致性。"
+          ],
+          refs: {
+            "py localNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L306-L314",
+            "AstNodeBuilder.localNode": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstNodeBuilder.scala#L309-L327"
+          }
+        },
+        {
+          nodeType: "IDENTIFIER",
+          severity: "warn",
+          python: {
+            "typeFullName": "默认 ANY（更多依赖后处理 type recovery）",
+            "dynamicTypeHintFullName": "后处理可写入；AST 默认较空"
+          },
+          php: {
+            "typeFullName": "ANY 或更具体",
+            "dynamicTypeHintFullName": "更常携带推断/解析结果"
+          },
+          diffs: [
+            "差异主要来自“类型恢复/导入解析”的完整度，而不是 identifier 节点本身构建。"
+          ],
+          refs: {
+            "py identifierNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L220-L231",
+            "AstNodeBuilder.identifierNode": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstNodeBuilder.scala#L329-L344"
+          }
+        },
+        {
+          nodeType: "CONTROL_STRUCTURE",
+          severity: "warn",
+          python: {
+            "parserTypeName": "未填",
+            "controlStructureType": "填",
+            "pos": "line/col/offset"
+          },
+          php: {
+            "parserTypeName": "常填（class name）",
+            "controlStructureType": "填",
+            "pos": "line/col/offset"
+          },
+          diffs: [
+            "pysrc2cpg 缺 parserTypeName，会影响调试/可视化一致性（语义分析影响较小）。"
+          ],
+          refs: {
+            "py controlStructureNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L290-L304",
+            "AstNodeBuilder.controlStructureNode": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstNodeBuilder.scala#L277-L285"
+          }
+        },
+        {
+          nodeType: "JUMP_TARGET",
+          severity: "warn",
+          python: {
+            "pos": "未写 line/col/offset",
+            "parserTypeName": "未填",
+            "name": "code"
+          },
+          php: {
+            "pos": "line/col/offset",
+            "parserTypeName": "可控（默认 class name）",
+            "name": "可控"
+          },
+          diffs: [
+            "pysrc2cpg 的 jumpTarget 位置信息与 parserTypeName 仍缺失。"
+          ],
+          refs: {
+            "py jumpNode": "file:///d:/program/Ljoern/joern-cli/frontends/pysrc2cpg/src/main/scala/io/joern/pysrc2cpg/NodeBuilder.scala#L357-L365",
+            "AstNodeBuilder.jumpTargetNode": "file:///d:/program/Ljoern/joern-cli/frontends/x2cpg/src/main/scala/io/joern/x2cpg/AstNodeBuilder.scala#L389-L402"
+          }
+        }
+      ];
+
+      function norm(s) {
+        return String(s ?? "").toLowerCase();
+      }
+
+      function matchesQuery(item, q) {
+        if (!q) return true;
+        const hay = [
+          item.nodeType,
+          ...Object.keys(item.python || {}),
+          ...Object.values(item.python || {}),
+          ...Object.keys(item.php || {}),
+          ...Object.values(item.php || {}),
+          ...(item.diffs || [])
+        ].map(norm).join(" ");
+        return hay.includes(norm(q));
+      }
+
+      function severityLabel(sev) {
+        if (sev === "good") return ["差异小", "good"];
+        if (sev === "warn") return ["差异中", "warn"];
+        return ["差异大", "bad"];
+      }
+
+      function escapeHtml(s) {
+        return String(s ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function kvHtml(obj) {
+        const entries = Object.entries(obj || {});
+        if (!entries.length) return "";
+        return `
+          <div class="kv">
+            ${entries
+              .map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div class="v">${escapeHtml(v)}</div>`)
+              .join("")}
+          </div>
+        `;
+      }
+
+      function refsHtml(refs) {
+        const entries = Object.entries(refs || {});
+        if (!entries.length) return "";
+        return `
+          <div class="refs">
+            ${entries
+              .map(([k, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(k)}</a>`)
+              .join("")}
+          </div>
+        `;
+      }
+
+      function cardHtml(item) {
+        const [label, cls] = severityLabel(item.severity);
+        return `
+          <section class="card" data-severity="${escapeHtml(item.severity)}">
+            <div class="cardHead">
+              <div class="cardTitle">
+                <div class="nodeType">${escapeHtml(item.nodeType)}</div>
+                <div class="severity ${escapeHtml(cls)}">${escapeHtml(label)}</div>
+              </div>
+            </div>
+            <div class="cardBody">
+              <div class="grid2">
+                <div class="box">
+                  <h3>pysrc2cpg</h3>
+                  ${kvHtml(item.python)}
+                </div>
+                <div class="box">
+                  <h3>php2cpg</h3>
+                  ${kvHtml(item.php)}
+                </div>
+              </div>
+              <div class="diff">
+                <div style="font-weight:650; color: rgba(170, 179, 208, 0.95);">差异点</div>
+                <ul>
+                  ${(item.diffs || []).map(d => `<li>${escapeHtml(d)}</li>`).join("")}
+                </ul>
+                ${refsHtml(item.refs)}
+              </div>
+            </div>
+          </section>
+        `;
+      }
+
+      function render() {
+        const q = document.getElementById("q").value.trim();
+        const onlyDiff = document.getElementById("onlyDiff").checked;
+        const group = document.getElementById("group").checked;
+
+        let items = data.filter(it => matchesQuery(it, q));
+        if (onlyDiff) items = items.filter(it => it.severity !== "good");
+
+        const countEl = document.getElementById("count");
+        countEl.textContent = `当前展示：${items.length} 项（共 ${data.length} 项）`;
+
+        const container = document.getElementById("cards");
+        if (!group) {
+          container.innerHTML = items.map(cardHtml).join("");
+          return;
+        }
+
+        const order = ["bad", "warn", "good"];
+        const groups = new Map(order.map(s => [s, []]));
+        items.forEach(it => groups.get(it.severity)?.push(it));
+
+        const groupTitles = {
+          bad: "差异大（优先对齐）",
+          warn: "差异中（建议对齐）",
+          good: "差异小（可后置）"
+        };
+
+        container.innerHTML = order
+          .map(sev => {
+            const list = groups.get(sev) || [];
+            if (!list.length) return "";
+            const [label, cls] = severityLabel(sev);
+            return `
+              <section class="card">
+                <div class="cardHead">
+                  <div class="cardTitle">
+                    <div class="nodeType">${escapeHtml(groupTitles[sev] || label)}</div>
+                    <div class="severity ${escapeHtml(cls)}">${escapeHtml(label)}</div>
+                  </div>
+                </div>
+                <div class="cardBody">
+                  ${list.map(cardHtml).join("")}
+                </div>
+              </section>
+            `;
+          })
+          .join("");
+      }
+
+      function resetUi() {
+        document.getElementById("q").value = "";
+        document.getElementById("onlyDiff").checked = true;
+        document.getElementById("group").checked = false;
+        render();
+      }
+
+      document.getElementById("q").addEventListener("input", render);
+      document.getElementById("onlyDiff").addEventListener("change", render);
+      document.getElementById("group").addEventListener("change", render);
+      document.getElementById("reset").addEventListener("click", resetUi);
+
+      render();
+    </script>
+  </body>
+</html>

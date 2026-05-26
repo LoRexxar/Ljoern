@@ -34,11 +34,9 @@ class CompareCpgTests extends PySrc2CpgFixture with Matchers {
     val cpg = code("""x < y < z""".stripMargin)
 
     "test compare node" in {
-      val assign1Node = cpg.call.code("tmp0 = y").head
-      val andNode     = assign1Node.astParent.astChildren.order(assign1Node.order + 1).isCall.head
-      andNode.code shouldBe "x < tmp0 and tmp0 < z"
-      andNode.astChildren.order(1).isCall.code.head shouldBe "x < tmp0"
-      andNode.astChildren.order(2).isBlock.code.head shouldBe "tmp0 < z"
+      val andNode = cpg.call.nameExact(Operators.logicalAnd).head
+      andNode.astChildren.order(1).isCall.code.head shouldBe "x < y"
+      andNode.astChildren.order(2).isBlock.astChildren.isCall.code.head shouldBe "y < z"
     }
 
   }

@@ -4,6 +4,7 @@ import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.passes.ForkJoinParallelCpgPass
 import io.joern.pysrc2cpg.PythonVersion.PythonV2AndV3
 import io.joern.pysrc2cpg.Py2Cpg.InputProvider
+import io.joern.pythonparser.ast
 import io.joern.pythonparser.PyParser
 import io.joern.x2cpg.ValidationMode
 import org.slf4j.LoggerFactory
@@ -23,9 +24,23 @@ class CodeToCpg(
     val parser                 = new PyParser()
     val lineBreakCorrectedCode = inputPair.content.replace("\r\n", "\n").replace("\r", "\n")
     try {
-      val astRoot    = parser.parse(lineBreakCorrectedCode)
+      val astRoot = parser.parse(lineBreakCorrectedCode) match {
+        case module: ast.Module => module
+        case other              => throw new RuntimeException(s"Expected ast.Module but got ${other.getClass}")
+      }
       val nodeToCode = new NodeToCode(lineBreakCorrectedCode)
-      val astVisitor = new PythonAstVisitor(inputPair.relFileName, nodeToCode, PythonV2AndV3, enableFileContent)(
+
+      val moduleFullName = ModuleFullName.fromRelFileName(inputPair.relFileName)
+      val symbolSummary  = PythonSymbolSummary.fromModule(astRoot)
+
+      val astVisitor = new PythonAstVisitor(
+        inputPair.relFileName,
+        nodeToCode,
+        PythonV2AndV3,
+        enableFileContent,
+        moduleFullName,
+        symbolSummary
+      )(
         schemaValidationMode
       )
       astVisitor.convert(astRoot)

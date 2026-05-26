@@ -71,32 +71,31 @@ class AssignCpgTests extends PySrc2CpgFixture with Matchers {
     "test block node properties" in {
       val block = getSurroundingBlock
       block.code shouldBe
-        """tmp0 = list
-          |x = tmp0[0]
-          |y = tmp0[1][0]
-          |z = tmp0[1][1]""".stripMargin
+        """x = list[0]
+          |y = list[1][0]
+          |z = list[1][1]""".stripMargin
       block.lineNumber shouldBe Some(1)
     }
 
     "test local node" in {
-      cpg.method.name("<module>").local.name("tmp0").headOption should not be empty
+      cpg.method.name("<module>").local.name("tmp0").headOption shouldBe empty
     }
 
     "test tmp variable assignment" in {
       val block         = getSurroundingBlock
-      val tmpAssignNode = block.astChildren.isCall.sortBy(_.order).head
-      tmpAssignNode.code shouldBe "tmp0 = list"
-      tmpAssignNode.methodFullName shouldBe Operators.assignment
-      tmpAssignNode.lineNumber shouldBe Some(1)
+      val firstAssign = block.astChildren.isCall.sortBy(_.order).head
+      firstAssign.code shouldBe "x = list[0]"
+      firstAssign.methodFullName shouldBe Operators.assignment
+      firstAssign.lineNumber shouldBe Some(1)
     }
 
     "test assignments to targets" in {
       val block       = getSurroundingBlock
-      val assignNodes = block.astChildren.isCall.sortBy(_.order).tail
+      val assignNodes = block.astChildren.isCall.sortBy(_.order)
       assignNodes.map(_.code) should contain theSameElementsInOrderAs List(
-        "x = tmp0[0]",
-        "y = tmp0[1][0]",
-        "z = tmp0[1][1]"
+        "x = list[0]",
+        "y = list[1][0]",
+        "z = list[1][1]"
       )
       assignNodes.map(_.lineNumber.get) should contain theSameElementsInOrderAs List(1, 1, 1)
     }
@@ -120,28 +119,27 @@ class AssignCpgTests extends PySrc2CpgFixture with Matchers {
     "test block node properties" in {
       val block = getSurroundingBlock
       block.code shouldBe
-        """tmp0 = list
-          |x = tmp0
-          |y = tmp0""".stripMargin
+        """x = list
+          |y = list""".stripMargin
       block.lineNumber shouldBe Some(1)
     }
 
     "test local node" in {
-      cpg.method.name("<module>").local.name("tmp0").headOption should not be empty
+      cpg.method.name("<module>").local.name("tmp0").headOption shouldBe empty
     }
 
     "test tmp variable assignment" in {
       val block         = getSurroundingBlock
-      val tmpAssignNode = block.astChildren.isCall.sortBy(_.order).head
-      tmpAssignNode.code shouldBe "tmp0 = list"
-      tmpAssignNode.methodFullName shouldBe Operators.assignment
-      tmpAssignNode.lineNumber shouldBe Some(1)
+      val firstAssign = block.astChildren.isCall.sortBy(_.order).head
+      firstAssign.code shouldBe "x = list"
+      firstAssign.methodFullName shouldBe Operators.assignment
+      firstAssign.lineNumber shouldBe Some(1)
     }
 
     "test assignments to targets" in {
       val block       = getSurroundingBlock
-      val assignNodes = block.astChildren.isCall.sortBy(_.order).tail
-      assignNodes.map(_.code) should contain theSameElementsInOrderAs List("x = tmp0", "y = tmp0")
+      val assignNodes = block.astChildren.isCall.sortBy(_.order)
+      assignNodes.map(_.code) should contain theSameElementsInOrderAs List("x = list", "y = list")
       assignNodes.map(_.lineNumber.get) should contain theSameElementsInOrderAs List(1, 1)
     }
   }

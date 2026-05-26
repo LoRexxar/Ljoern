@@ -234,4 +234,25 @@ private class RecoverForPythonFile(cpg: Cpg, cu: File, builder: DiffGraphBuilder
     }
   }
 
+  override protected def setTypeForFieldAccess(fieldAccess: Call, i: Identifier, f: FieldIdentifier): Unit = {
+    val idHints   = if (symbolTable.contains(i)) symbolTable.get(i) else symbolTable.get(CallAlias(i.name))
+    val callTypes = symbolTable.get(fieldAccess)
+    persistType(i, idHints)
+
+    val resolvedBaseTypes = idHints.filterNot(_ == Defines.Any)
+    val resolvedCallTypes =
+      if (callTypes.nonEmpty) callTypes
+      else if (resolvedBaseTypes.nonEmpty) resolvedBaseTypes.map(XTypeRecovery.dummyMemberType(_, f.canonicalName, pathSep))
+      else Set(XTypeRecovery.dummyMemberType(i.name, f.canonicalName, pathSep))
+
+    persistType(fieldAccess, resolvedCallTypes)
+
+    fieldAccess.astParent.iterator.isCall.headOption match {
+      case Some(callFromFieldName) if symbolTable.contains(callFromFieldName) =>
+        persistType(callFromFieldName, symbolTable.get(callFromFieldName))
+      case _ =>
+    }
+    handlePotentialFunctionPointer(fieldAccess, idHints, f.canonicalName, Option(i.name))
+  }
+
 }
