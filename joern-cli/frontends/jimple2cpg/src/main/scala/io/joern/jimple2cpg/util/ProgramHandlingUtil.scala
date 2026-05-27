@@ -21,6 +21,81 @@ object ProgramHandlingUtil {
 
   private val logger = LoggerFactory.getLogger(ProgramHandlingUtil.getClass)
 
+  private def getPackagePathFromByteCode(bytes: Array[Byte]): Option[String] = {
+    val cr = new ClassReader(bytes)
+    sealed class ClassNameVisitor extends ClassVisitor(Opcodes.ASM9) {
+      var path: Option[String] = None
+      override def visit(
+        version: Int,
+        access: Int,
+        name: String,
+        signature: String,
+        superName: String,
+        interfaces: Array[String]
+      ): Unit = {
+        path = Some(name)
+      }
+    }
+    val rootVisitor = new ClassNameVisitor()
+    cr.accept(rootVisitor, SKIP_CODE)
+    rootVisitor.path
+  }
+
+  private def extractClassesFromArchiveDirectly(
+    archive: Path,
+    destDir: Path,
+    isClass: Entry => Boolean,
+    isConfigFile: Entry => Boolean
+  ): List[ClassFile] = {
+    Using.resource(new ZipFile(archive.absolutePathAsString)) { zipFile =>
+      zipFile.entries().asScala.flatMap { zipEntry =>
+        val entry = Entry(zipEntry, zipFile)
+        if (zipEntry.isDirectory || entry.isZipSlip) {
+          None
+        } else if (isClass(entry)) {
+          val entryName      = zipEntry.getName
+          val packagePathOpt = normalizeClassEntryPath(entryName)
+          packagePathOpt match {
+            case Some(packagePath) =>
+              val destFile = destDir / s"$packagePath.class"
+              if (Files.exists(destFile)) {
+                logger.warn(s"Overwriting class file: ${destFile.toAbsolutePath}")
+              }
+              Files.createDirectories(destFile.getParent)
+              Using.resource(zipFile.getInputStream(zipEntry)) { is =>
+                Files.copy(is, destFile, StandardCopyOption.REPLACE_EXISTING)
+              }
+              Some(ClassFile(destFile, Some(packagePath)))
+            case None =>
+              val bytes          = Using.resource(zipFile.getInputStream(zipEntry))(_.readAllBytes())
+              val packagePathOpt = Try(getPackagePathFromByteCode(bytes)).getOrElse(None)
+              packagePathOpt.map { packagePath =>
+                val destFile = destDir / s"$packagePath.class"
+                if (Files.exists(destFile)) {
+                  logger.warn(s"Overwriting class file: ${destFile.toAbsolutePath}")
+                }
+                Files.createDirectories(destFile.getParent)
+                Files.write(destFile, bytes)
+                ClassFile(destFile, Some(packagePath))
+              }
+          }
+        } else if (isConfigFile(entry)) {
+          val destFile = destDir / zipEntry.getName.replace('\\', '/')
+          if (Files.exists(destFile)) {
+            logger.warn(s"Overwriting file: ${destFile.toAbsolutePath}")
+          }
+          Files.createDirectories(destFile.getParent)
+          Using.resource(zipFile.getInputStream(zipEntry)) { is =>
+            Files.copy(is, destFile, StandardCopyOption.REPLACE_EXISTING)
+          }
+          None
+        } else {
+          None
+        }
+      }.toList
+    }
+  }
+
   def normalizeClassEntryPath(raw: String): Option[String] = {
     val normalizedSeparators = raw.replace('\\', '/')
 
@@ -366,12 +441,16 @@ object ProgramHandlingUtil {
     recurse: Boolean,
     depth: Int
   ): List[ClassFile] =
-    FileUtil
-      .usingTemporaryDirectory("extract-classes-") { tmpDir =>
-        extractClassesToTmp(src, tmpDir, isArchive, isClass, isConfigFile, recurse: Boolean, depth: Int).iterator
-          .flatMap(_.copyToPackageLayoutIn(destDir))
-          .collect { case x: ClassFile => x }
-          .toList
-      }
+    if (!recurse && Files.isRegularFile(src) && isArchive(Entry(src))) {
+      extractClassesFromArchiveDirectly(src, destDir, isClass, isConfigFile)
+    } else {
+      FileUtil
+        .usingTemporaryDirectory("extract-classes-") { tmpDir =>
+          extractClassesToTmp(src, tmpDir, isArchive, isClass, isConfigFile, recurse: Boolean, depth: Int).iterator
+            .flatMap(_.copyToPackageLayoutIn(destDir))
+            .collect { case x: ClassFile => x }
+            .toList
+        }
+    }
 
 }
