@@ -99,6 +99,7 @@ flake.lock
 **/.DS_Store
 **/.bsp
 .trae/
+.tools/
 
 
 /joern-cli/frontends/c2cpg/eclipse-cdt/build/

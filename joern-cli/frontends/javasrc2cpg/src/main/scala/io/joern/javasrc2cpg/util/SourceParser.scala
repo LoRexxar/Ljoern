@@ -22,6 +22,7 @@ import scala.util.matching.Regex
 
 class SourceParser(
   val relativeFilenames: List[String],
+  val allowedPackagePrefixes: Set[String],
   analysisRoot: Path,
   typesRoot: Path,
   dirToDelete: Option[Path]
@@ -96,14 +97,19 @@ class SourceParser(
     dirToDelete.foreach(FileUtil.delete(_))
   }
 
+  def collectPackagePrefixAllowlist(): Set[String] = {
+    SourceParser.collectPackagePrefixAllowlist(analysisRoot, relativeFilenames)
+  }
+
 }
 
 object SourceParser {
-  case class FileInfo(relativePath: Path, packageName: Option[String], usesLombok: Boolean)
+  case class FileInfo(relativePath: Path, packageName: Option[String], importedPackages: Set[String], usesLombok: Boolean)
 
   object FileInfo {
 
     private val PackageNameRegex: Regex = raw"package\s+([a-zA-Z$$_.]+)\s*;".r
+    private val ImportRegex: Regex      = raw"(?m)^\s*import\s+(?:static\s+)?([a-zA-Z0-9$$_.]+)(?:\.\*)?\s*;".r
 
     def getFileInfo(inputDir: Path, filename: String): Option[FileInfo] = {
       fileIfExists(filename).map { file =>
@@ -112,14 +118,57 @@ object SourceParser {
 
         val packageName = PackageNameRegex.findFirstMatchIn(content).map(_.group(1))
 
+        val importedPackages = ImportRegex
+          .findAllMatchIn(content)
+          .map(_.group(1))
+          .flatMap { importedName =>
+            importedName.split("\\.").toList match {
+              case Nil | _ :: Nil => None
+              case parts          => Some(parts.dropRight(1).mkString("."))
+            }
+          }
+          .toSet
+
         val usesLombok = content.contains("lombok")
 
-        new FileInfo(relativePath, packageName, usesLombok)
+        new FileInfo(relativePath, packageName, importedPackages, usesLombok)
       }
     }
   }
 
   private val logger = LoggerFactory.getLogger(this.getClass)
+
+  private val PackageLineRegex: Regex     = raw"(?m)^\s*package\s+([a-zA-Z$$_.]+)\s*;".r
+  private val ImportLineRegex: Regex      = raw"(?m)^\s*import\s+(?:static\s+)?([a-zA-Z$$_][a-zA-Z0-9$$_]*(?:\.[a-zA-Z$$_][a-zA-Z0-9$$_]*)*)(?:\.\*)?\s*;".r
+  private val BlockCommentRegex: Regex    = raw"(?s)/\*.*?\*/".r
+  private val LineCommentRegex: Regex     = raw"(?m)//.*?$$".r
+
+  def collectPackagePrefixAllowlist(rootDir: Path, relativeFilenames: Iterable[String]): Set[String] = {
+    relativeFilenames.iterator
+      .flatMap { relativeFilename =>
+        fileIfExists(rootDir.resolve(relativeFilename)).iterator.flatMap { file =>
+          val content = Try(file.fileContent).getOrElse("")
+          collectPackagePrefixAllowlistFromContent(content)
+        }
+      }
+      .toSet
+  }
+
+  private def collectPackagePrefixAllowlistFromContent(content: String): Set[String] = {
+    val stripped = stripComments(content)
+    val packages = PackageLineRegex.findAllMatchIn(stripped).map(_.group(1))
+    val imports  = ImportLineRegex.findAllMatchIn(stripped).map(_.group(1))
+    (packages ++ imports).map(packagePrefixForQualifiedName).filter(_.nonEmpty).toSet
+  }
+
+  private def stripComments(content: String): String = {
+    val noBlock = BlockCommentRegex.replaceAllIn(content, "")
+    LineCommentRegex.replaceAllIn(noBlock, "")
+  }
+
+  private def packagePrefixForQualifiedName(qualifiedName: String): String = {
+    qualifiedName.split("\\.").take(2).mkString(".")
+  }
 
   private def checkExists(file: Path): Option[Path] = {
     if (Files.exists(file)) {
@@ -176,6 +225,8 @@ object SourceParser {
       case DelombokMode.RunDelombok => (delombokDir, delombokDir)
     }
 
-    new SourceParser(fileInfo.map(_.relativePath.toString), analysisRoot, typesRoot, dirToDelete)
+    val relativeFilenames      = fileInfo.map(_.relativePath.toString)
+    val allowedPackagePrefixes = collectPackagePrefixAllowlist(analysisRoot, relativeFilenames) ++ Set("java.lang")
+    new SourceParser(relativeFilenames, allowedPackagePrefixes, analysisRoot, typesRoot, dirToDelete)
   }
 }
