@@ -2,10 +2,7 @@ package io.joern.jimple2cpg
 
 import io.joern.jimple2cpg.Frontend.*
 import io.joern.x2cpg.{SingleThreadedFrontend, X2CpgConfig, X2CpgMain}
-import io.joern.x2cpg.utils.server.FrontendHTTPServer
 import scopt.OParser
-
-import java.util.concurrent.ExecutorService
 
 /** Command line configuration parameters
   */

@@ -96,6 +96,39 @@ object ProgramHandlingUtil {
     }
   }
 
+  def listClassesInArchive(archive: Path, destDir: Path, isClass: Entry => Boolean, isConfigFile: Entry => Boolean): List[ClassFile] = {
+    Using.resource(new ZipFile(archive.absolutePathAsString)) { zipFile =>
+      zipFile.entries().asScala.flatMap { zipEntry =>
+        val entry = Entry(zipEntry, zipFile)
+        if (zipEntry.isDirectory || entry.isZipSlip) {
+          None
+        } else if (isClass(entry)) {
+          val entryName = zipEntry.getName
+          val packagePathOpt = normalizeClassEntryPath(entryName).orElse {
+            val bytes = Using.resource(zipFile.getInputStream(zipEntry))(_.readAllBytes())
+            Try(getPackagePathFromByteCode(bytes)).getOrElse(None)
+          }
+          packagePathOpt.map { packagePath =>
+            val destFile = destDir / s"$packagePath.class"
+            ClassFile(destFile, Some(packagePath))
+          }
+        } else if (isConfigFile(entry)) {
+          val destFile = destDir / zipEntry.getName.replace('\\', '/')
+          if (Files.exists(destFile)) {
+            logger.warn(s"Overwriting file: ${destFile.toAbsolutePath}")
+          }
+          Files.createDirectories(destFile.getParent)
+          Using.resource(zipFile.getInputStream(zipEntry)) { is =>
+            Files.copy(is, destFile, StandardCopyOption.REPLACE_EXISTING)
+          }
+          None
+        } else {
+          None
+        }
+      }.toList
+    }
+  }
+
   def normalizeClassEntryPath(raw: String): Option[String] = {
     val normalizedSeparators = raw.replace('\\', '/')
 
