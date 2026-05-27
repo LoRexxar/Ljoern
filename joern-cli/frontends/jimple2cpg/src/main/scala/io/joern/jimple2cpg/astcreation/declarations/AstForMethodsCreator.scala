@@ -4,6 +4,7 @@ import cats.syntax.all.*
 import io.joern.jimple2cpg.astcreation.AstCreator
 import io.joern.jimple2cpg.astcreation.statements.BodyControlInfo
 import io.joern.x2cpg.{Ast, ValidationMode}
+import io.joern.x2cpg.utils.CanonicalName
 import io.shiftleft.codepropertygraph.generated.*
 import io.shiftleft.codepropertygraph.generated.nodes.*
 import org.slf4j.LoggerFactory
@@ -146,20 +147,20 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
   }
 
   private def astForMethodReturn(methodDeclaration: SootMethod): NewMethodReturn = {
-    val typeFullName = registerType(methodDeclaration.getReturnType.toQuotedString)
+    val typeFullName = registerType(CanonicalName.normalizeTypeFullName(methodDeclaration.getReturnType.toQuotedString))
     methodReturnNode(methodDeclaration, typeFullName)
   }
 
   private def createMethodNode(methodDeclaration: SootMethod, typeDecl: RefType) = {
     val name           = methodDeclaration.getName
     val fullName       = methodFullName(typeDecl, methodDeclaration)
-    val methodDeclType = registerType(methodDeclaration.getReturnType.toQuotedString)
+    val methodDeclType = registerType(CanonicalName.normalizeTypeFullName(methodDeclaration.getReturnType.toQuotedString))
     val code = if (!methodDeclaration.isConstructor) {
       s"$methodDeclType $name${paramListSignature(methodDeclaration, withParams = true)}"
     } else {
       s"${typeDecl.getClassName}${paramListSignature(methodDeclaration, withParams = true)}"
     }
-    val signature = s"$methodDeclType${paramListSignature(methodDeclaration)}"
+    val signature = CanonicalName.normalizeSignature(s"$methodDeclType${paramListSignature(methodDeclaration)}")
     methodNode(
       methodDeclaration,
       name,
@@ -173,14 +174,15 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
   }
 
   private def methodFullName(typeDecl: RefType, methodDeclaration: SootMethod): String = {
-    val typeName   = registerType(typeDecl.toQuotedString)
-    val returnType = registerType(methodDeclaration.getReturnType.toQuotedString)
+    val typeName   = registerType(CanonicalName.normalizeTypeFullName(typeDecl.toQuotedString))
+    val returnType = registerType(CanonicalName.normalizeTypeFullName(methodDeclaration.getReturnType.toQuotedString))
     val methodName = methodDeclaration.getName
     s"$typeName.$methodName:$returnType${paramListSignature(methodDeclaration)}"
   }
 
   private def paramListSignature(methodDeclaration: SootMethod, withParams: Boolean = false) = {
-    val paramTypes = methodDeclaration.getParameterTypes.asScala.map(x => registerType(x.toQuotedString))
+    val paramTypes =
+      methodDeclaration.getParameterTypes.asScala.map(x => registerType(CanonicalName.normalizeTypeFullName(x.toQuotedString)))
 
     val paramNames =
       if (!methodDeclaration.isPhantom && Try(methodDeclaration.retrieveActiveBody()).isSuccess)
@@ -198,7 +200,14 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
 
   protected def astForParameterRef(parameterRef: ParameterRef, parentUnit: SUnit): Ast = {
     val name = s"@parameter${parameterRef.getIndex}"
-    Ast(identifierNode(parentUnit, name, name, registerType(parameterRef.getType.toQuotedString)))
+    Ast(
+      identifierNode(
+        parentUnit,
+        name,
+        name,
+        registerType(CanonicalName.normalizeTypeFullName(parameterRef.getType.toQuotedString))
+      )
+    )
   }
 
   private def astForParameter(
@@ -207,7 +216,7 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
     methodDeclaration: SootMethod,
     parameterAnnotations: Map[String, VisibilityAnnotationTag]
   ): Ast = {
-    val typeFullName = registerType(parameter.getType.toQuotedString)
+    val typeFullName = registerType(CanonicalName.normalizeTypeFullName(parameter.getType.toQuotedString))
 
     val paramAst = Ast(
       parameterInNode(

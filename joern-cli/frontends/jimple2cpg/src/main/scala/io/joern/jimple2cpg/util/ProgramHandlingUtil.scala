@@ -194,6 +194,20 @@ object ProgramHandlingUtil {
   }
 
   object ClassFile {
+    private def getPackagePathFromExtractedPath(file: Path): Option[String] = {
+      val s   = file.toString
+      val idx = s.indexOf("extract-archive")
+      if (idx == -1) None
+      else {
+        val rel = s
+          .substring(idx)
+          .split(java.util.regex.Pattern.quote(java.io.File.separator))
+          .drop(1)
+          .mkString("/")
+        Option.when(rel.endsWith(".class"))(rel.stripSuffix(".class"))
+      }
+    }
+
     private def getPackagePathFromByteCode(is: InputStream): Option[String] = {
       val cr = new ClassReader(is)
       sealed class ClassNameVisitor extends ClassVisitor(Opcodes.ASM9) {
@@ -230,6 +244,9 @@ object ProgramHandlingUtil {
           }
           .getOrElse(None)
       }
+
+    private def getPackagePath(file: Path): Option[String] =
+      getPackagePathFromExtractedPath(file).orElse(getPackagePathFromByteCode(file))
   }
 
   sealed trait EntryFile {
@@ -292,7 +309,7 @@ object ProgramHandlingUtil {
 
   sealed class ClassFile(val file: Path, val packagePath: Option[String]) extends EntryFile {
 
-    def this(file: Path) = this(file, ClassFile.getPackagePathFromByteCode(file))
+    def this(file: Path) = this(file, ClassFile.getPackagePath(file))
 
     private val components: Option[Array[String]] = packagePath.map(_.split("/"))
 

@@ -31,6 +31,7 @@ import io.joern.javasrc2cpg.typesolvers.TypeInfoCalculator.TypeConstants
 import io.joern.javasrc2cpg.util.{NameConstants, Util}
 import io.joern.javasrc2cpg.util.Util.{composeMethodFullName, composeMethodLikeSignature, composeUnresolvedSignature}
 import io.joern.x2cpg.utils.AstPropertiesUtil.*
+import io.joern.x2cpg.utils.CanonicalName
 import io.joern.x2cpg.{Ast, Defines}
 import io.shiftleft.codepropertygraph.generated.PropertyDefaults
 import io.shiftleft.codepropertygraph.generated.nodes.{
@@ -104,7 +105,7 @@ trait AstForCallExpressionsCreator { this: AstCreator =>
           for {
             packageName <- Option(resolvedCall.getPackageName)
             className   <- Option(resolvedCall.getClassName)
-          } yield List(packageName, className.replace(".", "$")).filter(_.nonEmpty).mkString(".")
+          } yield CanonicalName.normalizeTypeFullName(List(packageName, className).filter(_.nonEmpty).mkString("."))
       }
       .flatten
       .getOrElse {
@@ -112,8 +113,10 @@ trait AstForCallExpressionsCreator { this: AstCreator =>
         receiverType.filter(_ != TypeConstants.Any).getOrElse(Defines.UnresolvedNamespace)
       }
 
-    val signature      = composeSignature(returnType, argumentTypes, argumentAsts.size)
-    val methodFullName = composeMethodFullName(namespace, callName, signature)
+    val signatureRaw      = composeSignature(returnType, argumentTypes, argumentAsts.size)
+    val signature         = CanonicalName.normalizeSignature(signatureRaw)
+    val methodFullNameRaw = composeMethodFullName(namespace, callName, signatureRaw)
+    val methodFullName    = CanonicalName.normalizeMethodFullName(methodFullNameRaw)
     val callRoot = NewCall()
       .name(callName)
       .methodFullName(methodFullName)
@@ -122,7 +125,7 @@ trait AstForCallExpressionsCreator { this: AstCreator =>
       .dispatchType(dispatchType)
       .lineNumber(line(call))
       .columnNumber(column(call))
-      .typeFullName(expressionTypeFullName.getOrElse(defaultTypeFallback()))
+      .typeFullName(CanonicalName.normalizeTypeFullName(expressionTypeFullName.getOrElse(defaultTypeFallback())))
 
     callAst(callRoot, argumentAsts, scopeAsts.headOption)
   }
