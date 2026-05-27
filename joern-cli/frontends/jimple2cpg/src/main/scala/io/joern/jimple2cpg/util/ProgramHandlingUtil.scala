@@ -21,6 +21,37 @@ object ProgramHandlingUtil {
 
   private val logger = LoggerFactory.getLogger(ProgramHandlingUtil.getClass)
 
+  def normalizeClassEntryPath(raw: String): Option[String] = {
+    val normalizedSeparators = raw.replace('\\', '/')
+
+    val entryPathOpt =
+      if (normalizedSeparators.contains("extract-archive")) {
+        val idx = normalizedSeparators.indexOf("extract-archive")
+        if (idx == -1) None
+        else {
+          val rel = normalizedSeparators
+            .substring(idx)
+            .split("/")
+            .drop(1)
+            .mkString("/")
+          Some(rel)
+        }
+      } else {
+        val isAbsolute =
+          normalizedSeparators.matches("^[A-Za-z]:/.*") || normalizedSeparators.startsWith("/") || normalizedSeparators
+            .startsWith("//")
+        if (isAbsolute) None else Some(normalizedSeparators)
+      }
+
+    entryPathOpt
+      .map { entryPath =>
+        if (entryPath.startsWith("BOOT-INF/classes/")) entryPath.stripPrefix("BOOT-INF/classes/")
+        else if (entryPath.startsWith("WEB-INF/classes/")) entryPath.stripPrefix("WEB-INF/classes/")
+        else entryPath.replaceFirst("^META-INF/versions/\\d+/", "")
+      }
+      .flatMap(path => Option.when(path.endsWith(".class"))(path.stripSuffix(".class")))
+  }
+
   /** Common properties of a File and ZipEntry, used to determine whether a file in a directory or an entry in an
     * archive is worth emitting/extracting
     */
@@ -194,19 +225,8 @@ object ProgramHandlingUtil {
   }
 
   object ClassFile {
-    private def getPackagePathFromExtractedPath(file: Path): Option[String] = {
-      val s   = file.toString
-      val idx = s.indexOf("extract-archive")
-      if (idx == -1) None
-      else {
-        val rel = s
-          .substring(idx)
-          .split(java.util.regex.Pattern.quote(java.io.File.separator))
-          .drop(1)
-          .mkString("/")
-        Option.when(rel.endsWith(".class"))(rel.stripSuffix(".class"))
-      }
-    }
+    private def getPackagePathFromExtractedPath(file: Path): Option[String] =
+      normalizeClassEntryPath(file.toString)
 
     private def getPackagePathFromByteCode(is: InputStream): Option[String] = {
       val cr = new ClassReader(is)
