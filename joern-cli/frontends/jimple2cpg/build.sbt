@@ -8,6 +8,7 @@ dependsOn(
 
 libraryDependencies ++= Seq(
   "io.shiftleft"  %% "codepropertygraph" % Versions.cpg,
+  "com.github.javaparser" % "javaparser-core" % Versions.javaParser,
   "org.soot-oss"   % "soot"              % Versions.soot,
   "org.typelevel" %% "cats-core"         % Versions.catsCore,
   "org.scalatest" %% "scalatest"         % Versions.scalatest % Test,

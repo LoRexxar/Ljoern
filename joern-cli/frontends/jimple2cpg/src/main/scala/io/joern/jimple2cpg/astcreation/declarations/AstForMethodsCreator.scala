@@ -3,6 +3,7 @@ package io.joern.jimple2cpg.astcreation.declarations
 import cats.syntax.all.*
 import io.joern.jimple2cpg.astcreation.AstCreator
 import io.joern.jimple2cpg.astcreation.statements.BodyControlInfo
+import io.joern.jimple2cpg.util.JavaMethodSourceExtractor
 import io.joern.x2cpg.{Ast, ValidationMode}
 import io.joern.x2cpg.utils.CanonicalName
 import io.shiftleft.codepropertygraph.generated.*
@@ -29,6 +30,11 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
   protected def astForMethod(methodDeclaration: SootMethod, typeDecl: RefType): Ast = {
     val bodyStatementsInfo = BodyControlInfo()
     val methodNode         = createMethodNode(methodDeclaration, typeDecl)
+    val extractedJavaCode  = fileContent.flatMap(JavaMethodSourceExtractor.extract(_, methodDeclaration, typeDecl))
+    if (fileContent.isDefined) {
+      if (extractedJavaCode.isDefined) accumulator.methodCodeJavaSuccess += 1
+      else accumulator.methodCodeJavaFail += 1
+    }
     try {
       if (!methodDeclaration.isConcrete) {
         // Soot is not able to parse origin parameter names of abstract methods
@@ -42,7 +48,9 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
             }
 
         methodAstWithAnnotations(
-          methodNode,
+          extractedJavaCode
+            .map(r => methodNode.code(r.code).lineNumberEnd(r.endLine))
+            .getOrElse(methodNode),
           parameterAsts,
           Ast(NewBlock()),
           astForMethodReturn(methodDeclaration),
@@ -66,10 +74,14 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
               astForParameter(param, index + 1, methodDeclaration, parameterAnnotations)
             }
 
+        val lineEndFromBody =
+          Try(methodBody.getUnits.asScala.map(_.getJavaSourceStartLineNumber).filter(_ != -1).max).toOption
+        val methodCode = extractedJavaCode.map(_.code).getOrElse(methodBody.toString)
+
         methodAstWithAnnotations(
           methodNode
-            .lineNumberEnd(methodBody.toString.split('\n').filterNot(_.isBlank).length)
-            .code(methodBody.toString),
+            .lineNumberEnd(extractedJavaCode.map(_.endLine).orElse(lineEndFromBody))
+            .code(methodCode),
           parameterAsts,
           astForMethodBody(methodBody, bodyStatementsInfo),
           astForMethodReturn(methodDeclaration),
@@ -185,12 +197,28 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
       methodDeclaration.getParameterTypes.asScala.map(x => registerType(CanonicalName.normalizeTypeFullName(x.toQuotedString)))
 
     val paramNames =
-      if (!methodDeclaration.isPhantom && Try(methodDeclaration.retrieveActiveBody()).isSuccess)
-        methodDeclaration.retrieveActiveBody().getParameterLocals.asScala.map(_.getName)
-      else
+      if (methodDeclaration.isPhantom) {
         paramTypes.zipWithIndex.map { x =>
           s"param${x._2 + 1}"
         }
+      } else {
+        val fromTags = methodDeclaration.getTags.asScala.collectFirst { case x: ParamNamesTag => x }.toList
+          .flatMap(_.getNames.asScala)
+
+        val fromActiveBody =
+          Option
+            .when(methodDeclaration.hasActiveBody)(Try(methodDeclaration.getActiveBody.getParameterLocals.asScala.map(_.getName)).toOption)
+            .flatten
+            .toList
+            .flatten
+
+        val chosen =
+          if (fromTags.size == paramTypes.size && fromTags.nonEmpty) fromTags
+          else if (fromActiveBody.size == paramTypes.size && fromActiveBody.nonEmpty) fromActiveBody
+          else paramTypes.zipWithIndex.map { x => s"param${x._2 + 1}" }.toList
+
+        chosen
+      }
     if (!withParams) {
       "(" + paramTypes.mkString(",") + ")"
     } else {

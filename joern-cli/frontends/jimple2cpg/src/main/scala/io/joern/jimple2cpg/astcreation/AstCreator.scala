@@ -23,8 +23,8 @@ import scala.util.Try
 class AstCreator(
   protected val filename: String,
   protected val cls: SootClass,
-  accumulator: AstCreationPass.Accumulator,
-  fileContent: Option[String] = None
+  protected val accumulator: AstCreationPass.Accumulator,
+  protected val fileContent: Option[String] = None
 )(implicit withSchemaValidation: ValidationMode)
     extends AstCreatorBase[Host, AstCreator](filename)
     with AstForDeclarationsCreator
