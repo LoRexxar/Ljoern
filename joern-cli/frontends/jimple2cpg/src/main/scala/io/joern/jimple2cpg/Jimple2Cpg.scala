@@ -1,6 +1,7 @@
 package io.joern.jimple2cpg
 
 import io.joern.jimple2cpg.passes.{AstCreationPass, DeclarationRefPass, SootAstCreationPass}
+import io.joern.jimple2cpg.rewrite.JimpleAstRewriter
 import io.joern.jimple2cpg.util.Decompiler
 import io.joern.jimple2cpg.util.ProgramHandlingUtil.{ClassFile, extractClassesInPackageLayout, listClassesInArchive}
 import io.joern.x2cpg.X2Cpg.withNewEmptyCpg
@@ -125,6 +126,10 @@ class Jimple2Cpg extends X2CpgFrontend {
           val astCreator =
             FrontendProfiling.time("AstCreationPass.init") { AstCreationPass(classFiles, cpg, config, decompiledSources) }
           FrontendProfiling.time("AstCreationPass.run") { astCreator.createAndApply() }
+          FrontendProfiling.time("JimpleAstRewriter") { JimpleAstRewriter.run(cpg) }
+          FrontendProfiling.metric("rewriter.totalTmps", JimpleAstRewriter.totalTmps.get())
+          FrontendProfiling.metric("rewriter.fused", JimpleAstRewriter.fusedCount.get())
+          FrontendProfiling.metric("rewriter.multiUse", JimpleAstRewriter.multiUseCount.get())
           astCreator.usedTypes()
         }
     }

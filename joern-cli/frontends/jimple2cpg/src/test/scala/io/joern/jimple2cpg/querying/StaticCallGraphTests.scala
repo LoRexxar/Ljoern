@@ -36,8 +36,8 @@ class StaticCallGraphTests extends JimpleCode2CpgFixture {
       Set(
         "add(3, 3)",
         "$stack2.println($stack3)",
-        "$stack2 = java.lang.System.out",
-        "$stack3 = add(3, 3)",
+        "<fused: $stack2 = java.lang.System.out>",
+        "<fused: $stack3 = add(3, 3)>",
         "java.lang.System.out"
       )
   }

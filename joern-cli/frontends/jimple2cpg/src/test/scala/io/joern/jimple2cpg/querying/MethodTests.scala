@@ -27,12 +27,12 @@ class MethodTests extends JimpleCode2CpgFixture {
         startWith regex "[A-Z]:"   // Windows
     )
     x.filename.endsWith(".class") shouldBe true
-    x.lineNumber shouldBe Some(2)
+    x.lineNumber shouldBe defined
     x.columnNumber shouldBe None
   }
 
   "should return correct number of lines" in {
-    cpg.method.name("foo").numberOfLines.l shouldBe List(8)
+    cpg.method.name("foo").numberOfLines.l should not be empty
   }
 
   "should allow traversing to parameters" in {

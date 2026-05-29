@@ -76,10 +76,13 @@ trait AstForMethodsCreator(implicit withSchemaValidation: ValidationMode) { this
 
         val lineEndFromBody =
           Try(methodBody.getUnits.asScala.map(_.getJavaSourceStartLineNumber).filter(_ != -1).max).toOption
+        val lineStartFromBody =
+          Try(methodBody.getUnits.asScala.map(_.getJavaSourceStartLineNumber).filter(_ != -1).min).toOption
         val methodCode = extractedJavaCode.map(_.code).getOrElse(methodBody.toString)
 
         methodAstWithAnnotations(
           methodNode
+            .lineNumber(extractedJavaCode.map(_.startLine).orElse(lineStartFromBody))
             .lineNumberEnd(extractedJavaCode.map(_.endLine).orElse(lineEndFromBody))
             .code(methodCode),
           parameterAsts,
