@@ -1,11 +1,11 @@
 package io.joern.jimple2cpg.rewrite
 
 import io.shiftleft.codepropertygraph.generated.{Cpg, EdgeTypes, Operators, PropertyNames}
-import io.shiftleft.codepropertygraph.generated.nodes.{Identifier, Method}
+import io.shiftleft.codepropertygraph.generated.nodes.{Call, Expression, Identifier, Literal, Method, Unknown}
 import io.shiftleft.passes.ForkJoinParallelCpgPass
 import io.shiftleft.semanticcpg.language.*
 
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicLong, LongAdder}
 import scala.collection.mutable
 
 class JimpleAstRewriter(cpg: Cpg) extends ForkJoinParallelCpgPass[Method](cpg) {
@@ -45,29 +45,65 @@ class JimpleAstRewriter(cpg: Cpg) extends ForkJoinParallelCpgPass[Method](cpg) {
             val rhsType = rhsNode.properties.get(PropertyNames.TypeFullName).map(_.toString).getOrElse("")
             if (rhsCode.nonEmpty) {
               val uses = idByName.getOrElse(name, Nil).filterNot(_ eq id)
-              if (uses.size == 1) {
-                val use = uses.head
-                builder.setNodeProperty(use, PropertyNames.Code, rhsCode)
-                val useCurrentType = use.properties.get(PropertyNames.TypeFullName).map(_.toString).getOrElse("")
-                val betterType = if (rhsType.nonEmpty && rhsType != "ANY") rhsType else useCurrentType
-                if (betterType.nonEmpty && betterType != "ANY") {
-                  builder.setNodeProperty(use, PropertyNames.TypeFullName, betterType)
-                }
-                builder.setNodeProperty(assign, PropertyNames.Code, s"<fused: $name = $rhsCode>")
+              val rhsKind = classifyRhs(rhsNode)
+
+              if (uses.isEmpty) {
+                deadCount.incrementAndGet()
+                deadByRhs.getOrElseUpdate(rhsKind, new LongAdder()).increment()
+                processed += name
+                builder.setNodeProperty(assign, PropertyNames.Code, s"<dead: $name = $rhsCode>")
+                removeLocal(builder, localsByName, name)
+              } else if (uses.size == 1) {
+                fuseSingleUse(builder, uses.head, assign, name, rhsCode, rhsType)
                 processed += name
                 fusedCount.incrementAndGet()
-                localsByName.get(name).toList.flatten.foreach { local =>
-                  local.inE(EdgeTypes.REF).foreach(builder.removeEdge)
-                  local.inE(EdgeTypes.AST).foreach(builder.removeEdge)
-                  builder.removeNode(local)
+                removeLocal(builder, localsByName, name)
+              } else if (isInlineableRhs(rhsNode)) {
+                uses.foreach { use =>
+                  fuseSingleUse(builder, use, assign, name, rhsCode, rhsType)
                 }
-              } else if (uses.size > 1) {
+                processed += name
+                fusedCount.addAndGet(uses.size)
+                multiFusedCount.incrementAndGet()
+                removeLocal(builder, localsByName, name)
+              } else {
                 multiUseCount.incrementAndGet()
+                multiByRhs.getOrElseUpdate(rhsKind, new LongAdder()).increment()
+                multiByUseCount.getOrElseUpdate(uses.size, new LongAdder()).increment()
               }
             }
           case _ => ()
         }
       }
+  }
+
+  private def fuseSingleUse(
+    builder: DiffGraphBuilder,
+    use: Identifier,
+    assign: Call,
+    name: String,
+    rhsCode: String,
+    rhsType: String
+  ): Unit = {
+    builder.setNodeProperty(use, PropertyNames.Code, rhsCode)
+    val useCurrentType = use.properties.get(PropertyNames.TypeFullName).map(_.toString).getOrElse("")
+    val betterType = if (rhsType.nonEmpty && rhsType != "ANY") rhsType else useCurrentType
+    if (betterType.nonEmpty && betterType != "ANY") {
+      builder.setNodeProperty(use, PropertyNames.TypeFullName, betterType)
+    }
+    builder.setNodeProperty(assign, PropertyNames.Code, s"<fused: $name = $rhsCode>")
+  }
+
+  private def removeLocal(
+    builder: DiffGraphBuilder,
+    localsByName: Map[String, ? <: Seq[? <: io.shiftleft.codepropertygraph.generated.nodes.Local]],
+    name: String
+  ): Unit = {
+    localsByName.get(name).toList.flatten.foreach { local =>
+      local.inE(EdgeTypes.REF).foreach(builder.removeEdge)
+      local.inE(EdgeTypes.AST).foreach(builder.removeEdge)
+      builder.removeNode(local)
+    }
   }
 }
 
@@ -75,24 +111,45 @@ object JimpleAstRewriter {
 
   private val TmpPattern = """^\$(stack|r|i|l|d|f|z|c|b|s)\d+$|^tmp(\d+|_.*)?$""".r
 
-  val totalTmps     = new AtomicLong(0)
-  val fusedCount    = new AtomicLong(0)
-  val multiUseCount = new AtomicLong(0)
+  val totalTmps      = new AtomicLong(0)
+  val fusedCount     = new AtomicLong(0)
+  val deadCount      = new AtomicLong(0)
+  val multiUseCount  = new AtomicLong(0)
+  val multiFusedCount = new AtomicLong(0)
+
+  val multiByRhs      = mutable.Map.empty[String, LongAdder]
+  val multiByUseCount = mutable.Map.empty[Int, LongAdder]
+  val deadByRhs       = mutable.Map.empty[String, LongAdder]
 
   def isTmpName(name: String): Boolean = TmpPattern.findFirstIn(name).isDefined
+
+  private def classifyRhs(node: Expression): String = node match {
+    case _: Literal    => "literal"
+    case _: Identifier => "identifier"
+    case _: Call       => "call"
+    case _: Unknown    => "unknown"
+    case _             => node.getClass.getSimpleName
+  }
+
+  private def isInlineableRhs(node: Expression): Boolean = node match {
+    case _: Literal    => true
+    case _: Identifier => true
+    case _             => false
+  }
 
   def reset(): Unit = {
     totalTmps.set(0)
     fusedCount.set(0)
+    deadCount.set(0)
     multiUseCount.set(0)
+    multiFusedCount.set(0)
+    multiByRhs.clear()
+    multiByUseCount.clear()
+    deadByRhs.clear()
   }
 
   def run(cpg: Cpg): Unit = {
     reset()
     new JimpleAstRewriter(cpg).createAndApply()
   }
-
-  def stats: String =
-    s"JimpleAstRewriter: totalTmps=${totalTmps.get()}, fused=${fusedCount.get()}, multiUse=${multiUseCount.get()}, " +
-      s"elimRate=${if (totalTmps.get() > 0) f"${fusedCount.get().toDouble / totalTmps.get() * 100}%.1f%%" else "N/A"}"
 }

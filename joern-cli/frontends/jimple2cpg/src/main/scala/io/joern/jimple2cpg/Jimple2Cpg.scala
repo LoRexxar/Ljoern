@@ -129,7 +129,18 @@ class Jimple2Cpg extends X2CpgFrontend {
           FrontendProfiling.time("JimpleAstRewriter") { JimpleAstRewriter.run(cpg) }
           FrontendProfiling.metric("rewriter.totalTmps", JimpleAstRewriter.totalTmps.get())
           FrontendProfiling.metric("rewriter.fused", JimpleAstRewriter.fusedCount.get())
+          FrontendProfiling.metric("rewriter.dead", JimpleAstRewriter.deadCount.get())
           FrontendProfiling.metric("rewriter.multiUse", JimpleAstRewriter.multiUseCount.get())
+          FrontendProfiling.metric("rewriter.multiFused", JimpleAstRewriter.multiFusedCount.get())
+          JimpleAstRewriter.multiByRhs.foreach { case (k, v) =>
+            FrontendProfiling.metric(s"rewriter.multi.rhs.$k", v.sum())
+          }
+          JimpleAstRewriter.multiByUseCount.toSeq.sortBy(_._1).foreach { case (k, v) =>
+            FrontendProfiling.metric(s"rewriter.multi.uses$k", v.sum())
+          }
+          JimpleAstRewriter.deadByRhs.foreach { case (k, v) =>
+            FrontendProfiling.metric(s"rewriter.dead.rhs.$k", v.sum())
+          }
           astCreator.usedTypes()
         }
     }
