@@ -18,12 +18,22 @@ trait AstCreatorHelper(implicit withSchemaValidation: ValidationMode) { this: As
   protected def nodeTypeOf(json: Value): BabelNode = fromString(json("type").str)
 
   protected def createBabelNodeInfo(json: Value): BabelNodeInfo = {
-    val c     = code(json)
-    val ln    = line(json)
-    val cn    = column(json)
-    val lnEnd = lineEnd(json)
-    val cnEnd = columnEnd(json)
-    val node  = nodeTypeOf(json)
+    val startOpt = start(json)
+    val endOpt   = end(json)
+    val ln       = startOpt.map(getLineOfSource)
+    val cn       = for { s <- startOpt; l <- ln } yield s - lineStartPositions(l - 1)
+    val lnEnd    = endOpt.map(getLineOfSource)
+    val cnEnd    = for { e <- endOpt; l <- lnEnd } yield e - lineStartPositions(l - 1)
+    val c = (startOpt, endOpt) match {
+      case (Some(s), Some(e)) =>
+        shortenCode(
+          parserResult.fileContent
+            .substring(math.max(s, 0), math.min(e, parserResult.fileContent.length))
+            .trim
+        )
+      case _ => PropertyDefaults.Code
+    }
+    val node = nodeTypeOf(json)
     BabelNodeInfo(node, json, c, ln, cn, lnEnd, cnEnd)
   }
 

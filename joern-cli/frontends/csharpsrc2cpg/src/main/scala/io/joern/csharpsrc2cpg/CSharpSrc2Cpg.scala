@@ -18,6 +18,7 @@ import io.joern.x2cpg.passes.callgraph.NaiveCallLinker
 import io.joern.x2cpg.passes.frontend.{MetaDataPass, TypeNodePass}
 import io.joern.x2cpg.utils.{ConcurrentTaskUtil, Environment, HashUtil, Report}
 import io.joern.x2cpg.{SourceFiles, X2CpgFrontend}
+import io.joern.x2cpg.utils.FrontendProfiling
 import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.codepropertygraph.generated.Languages
 import io.shiftleft.passes.CpgPassBase
@@ -39,30 +40,47 @@ class CSharpSrc2Cpg extends X2CpgFrontend {
   private val report: Report = new Report()
 
   override def createCpg(config: Config): Try[Cpg] = {
+    FrontendProfiling.run("csharpsrc2cpg", config.inputPath) {
     withNewEmptyCpg(config.outputPath, config) { (cpg, config) =>
       FileUtil.usingTemporaryDirectory("csharpsrc2cpgOut") { tmpDir =>
-        val astGenResult = new DotNetAstGenRunner(config).execute(tmpDir)
-        val astCreators  = CSharpSrc2Cpg.processAstGenRunnerResults(astGenResult.parsedFiles, config)
-        val buildFiles   = findBuildFiles(config)
-        val localSummary = ProgramSummaryCreator
-          .from(astCreators, config)
-          .addGlobalImports(ImplicitUsingsCollector.collect(buildFiles).toSet)
+        val astGenResult = FrontendProfiling.time("DotNetAstGenRunner") {
+          new DotNetAstGenRunner(config).execute(tmpDir)
+        }
+        val astCreators = FrontendProfiling.time("ProcessAstGenResults") {
+          CSharpSrc2Cpg.processAstGenRunnerResults(astGenResult.parsedFiles, config)
+        }
+        val buildFiles = findBuildFiles(config)
+        val localSummary = FrontendProfiling.time("ProgramSummaryCreator") {
+          ProgramSummaryCreator
+            .from(astCreators, config)
+            .addGlobalImports(ImplicitUsingsCollector.collect(buildFiles).toSet)
+        }
 
         val hash = HashUtil.sha256(astCreators.map(_.parserResult).map(x => Paths.get(x.fullPath)))
-        new MetaDataPass(cpg, Languages.CSHARPSRC, config.inputPath, Option(hash)).createAndApply()
+        FrontendProfiling.time("MetaDataPass") {
+          new MetaDataPass(cpg, Languages.CSHARPSRC, config.inputPath, Option(hash)).createAndApply()
+        }
 
         val packageIds = mutable.HashSet.empty[String]
-        new DependencyPass(cpg, buildFiles, packageIds.add).createAndApply()
-        // If "download dependencies" is enabled, then fetch dependencies and resolve their symbols for additional types
+        FrontendProfiling.time("DependencyPass") {
+          new DependencyPass(cpg, buildFiles, packageIds.add).createAndApply()
+        }
         val programSummary = if (config.downloadDependencies) {
-          DependencyDownloader(cpg, config, localSummary, packageIds.toSet).download()
+          FrontendProfiling.time("DependencyDownloader") {
+            DependencyDownloader(cpg, config, localSummary, packageIds.toSet).download()
+          }
         } else {
           localSummary
         }
-        new AstCreationPass(cpg, astCreators.map(_.withSummary(programSummary)), report).createAndApply()
-        TypeNodePass.withTypesFromCpg(cpg).createAndApply()
+        FrontendProfiling.time("AstCreationPass") {
+          new AstCreationPass(cpg, astCreators.map(_.withSummary(programSummary)), report).createAndApply()
+        }
+        FrontendProfiling.time("TypeNodePass") {
+          TypeNodePass.withTypesFromCpg(cpg).createAndApply()
+        }
         report.print()
       }
+    }
     }
   }
 

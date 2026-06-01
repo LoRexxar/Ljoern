@@ -532,7 +532,7 @@ trait AstForStatementsCreator(implicit withSchemaValidation: ValidationMode) { t
     val whileLoopAst = Ast(whileLoopNode).withChild(testCallAst).withConditionEdge(whileLoopNode, testCallNode)
 
     // while loop variable assignment:
-    val whileLoopVariableNode = astForNode(idNodeInfo.json)
+    val whileLoopVariableNode = astForNode(idNodeInfo)
 
     val baseNode = identifierNode(forInOfStmt, resultName)
 

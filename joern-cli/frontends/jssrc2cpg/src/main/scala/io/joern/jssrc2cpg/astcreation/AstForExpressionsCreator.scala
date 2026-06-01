@@ -152,7 +152,7 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
     val memberIsComputed = memberExpr.json("computed").bool
     val memberNodeInfo   = createBabelNodeInfo(memberExpr.json("property"))
     if (memberIsComputed) {
-      val memberAst = astForNode(memberNodeInfo.json)
+      val memberAst = astForNode(memberNodeInfo)
       createIndexAccessCallAst(baseAst, memberAst, memberExpr.lineNumber, memberExpr.columnNumber)
     } else {
       val fieldName = stripQuotes(memberNodeInfo.code)
@@ -192,7 +192,7 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
         val rhsAst = astForNodeWithFunctionReference(assignment.json("right"))
         astForDeconstruction(nodeInfo, rhsAst, assignment.code)
       case _ =>
-        val lhsAst = astForNode(assignment.json("left"))
+        val lhsAst = astForNode(nodeInfo)
         val rhsAst = astForNodeWithFunctionReference(assignment.json("right"))
         val callNode_ =
           callNode(assignment, assignment.code, op, DispatchTypes.STATIC_DISPATCH)
@@ -462,7 +462,7 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
               val key = createBabelNodeInfo(nodeInfo.json("key"))
               val keyAst = key.node match {
                 case _ if nodeInfo.json("computed").bool =>
-                  astForNode(key.json)
+                  astForNode(key)
                 case _ =>
                   val fieldName = stripQuotes(key.code)
                   Ast(fieldIdentifierNode(nodeInfo, fieldName, fieldName))

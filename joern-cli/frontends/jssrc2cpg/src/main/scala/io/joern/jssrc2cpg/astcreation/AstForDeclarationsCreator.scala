@@ -617,7 +617,7 @@ trait AstForDeclarationsCreator(implicit withSchemaValidation: ValidationMode) {
         case _ =>
           val destAst = idNodeInfo.node match {
             case Identifier => astForIdentifier(idNodeInfo, Option(typeFullName))
-            case _          => astForNode(idNodeInfo.json)
+            case _          => astForNode(idNodeInfo)
           }
 
           val assignmentCallAst =
@@ -634,7 +634,7 @@ trait AstForDeclarationsCreator(implicit withSchemaValidation: ValidationMode) {
   }
 
   private def convertDestructingObjectElement(element: BabelNodeInfo, key: BabelNodeInfo, localTmpName: String): Ast = {
-    val valueAst = astForNode(element.json)
+    val valueAst = astForNode(element)
 
     val nLocalNode = localNode(element, element.code, element.code, Defines.Any).order(0)
     diffGraph.addEdge(localAstParentStack.head, nLocalNode, EdgeTypes.AST)
@@ -654,7 +654,7 @@ trait AstForDeclarationsCreator(implicit withSchemaValidation: ValidationMode) {
   }
 
   private def convertDestructingArrayElement(element: BabelNodeInfo, index: Int, localTmpName: String): Ast = {
-    val valueAst = astForNode(element.json)
+    val valueAst = astForNode(element)
 
     val nLocalNode = localNode(element, element.code, element.code, Defines.Any).order(0)
     diffGraph.addEdge(localAstParentStack.head, nLocalNode, EdgeTypes.AST)

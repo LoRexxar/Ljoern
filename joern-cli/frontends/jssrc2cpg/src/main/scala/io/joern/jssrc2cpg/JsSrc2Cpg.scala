@@ -7,7 +7,7 @@ import io.joern.x2cpg.X2CpgFrontend
 import io.joern.x2cpg.frontendspecific.jssrc2cpg.postProcessingPasses
 import io.joern.x2cpg.passes.callgraph.{MethodRefLinker, NaiveCallLinker}
 import io.joern.x2cpg.passes.frontend.XTypeRecoveryConfig
-import io.joern.x2cpg.utils.{HashUtil, Report}
+import io.joern.x2cpg.utils.{FrontendProfiling, HashUtil, Report}
 import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.passes.CpgPassBase
 import io.shiftleft.semanticcpg.layers.LayerCreatorContext
@@ -21,24 +21,43 @@ class JsSrc2Cpg extends X2CpgFrontend {
   override val defaultConfig: Config = Config()
 
   def createCpg(config: Config): Try[Cpg] = {
+    FrontendProfiling.run("jssrc2cpg", config.inputPath) {
     withNewEmptyCpg(config.outputPath, config) { (cpg, config) =>
       FileUtil.usingTemporaryDirectory("jssrc2cpgOut") { tmpDir =>
         val report       = new Report()
-        val astGenResult = new AstGenRunner(config).execute(tmpDir)
-        val hash         = HashUtil.sha256(astGenResult.parsedFiles.map(Paths.get(_)))
+        val astGenResult = FrontendProfiling.time("AstGenRunner") {
+          new AstGenRunner(config).execute(tmpDir)
+        }
+        val hash = HashUtil.sha256(astGenResult.parsedFiles.map(Paths.get(_)))
 
-        val astCreationPass = new AstCreationPass(cpg, astGenResult, config, report)(config.schemaValidation)
-        astCreationPass.createAndApply()
+        val astCreationPass = FrontendProfiling.time("AstCreationPass") {
+          val pass = new AstCreationPass(cpg, astGenResult, config, report)(config.schemaValidation)
+          pass.createAndApply()
+          pass
+        }
 
-        JavaScriptTypeNodePass.withRegisteredTypes(astCreationPass.typesSeen(), cpg).createAndApply()
-        new JavaScriptMetaDataPass(cpg, hash, config.inputPath).createAndApply()
-        new DependenciesPass(cpg, config).createAndApply()
-        new ConfigPass(cpg, config, report).createAndApply()
-        new PrivateKeyFilePass(cpg, config, report).createAndApply()
-        new ImportsPass(cpg).createAndApply()
+        FrontendProfiling.time("JavaScriptTypeNodePass") {
+          JavaScriptTypeNodePass.withRegisteredTypes(astCreationPass.typesSeen(), cpg).createAndApply()
+        }
+        FrontendProfiling.time("JavaScriptMetaDataPass") {
+          new JavaScriptMetaDataPass(cpg, hash, config.inputPath).createAndApply()
+        }
+        FrontendProfiling.time("DependenciesPass") {
+          new DependenciesPass(cpg, config).createAndApply()
+        }
+        FrontendProfiling.time("ConfigPass") {
+          new ConfigPass(cpg, config, report).createAndApply()
+        }
+        FrontendProfiling.time("PrivateKeyFilePass") {
+          new PrivateKeyFilePass(cpg, config, report).createAndApply()
+        }
+        FrontendProfiling.time("ImportsPass") {
+          new ImportsPass(cpg).createAndApply()
+        }
 
         report.print()
       }
+    }
     }
   }
 

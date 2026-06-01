@@ -123,12 +123,15 @@ class AstCreator(val config: Config, val usedTypes: mutable.HashSet[String], val
     nodeInfo.node match {
       case _: FunctionLike =>
         astForFunctionDeclaration(nodeInfo, shouldCreateFunctionReference = true, shouldCreateAssignmentCall = true)
-      case _ => astForNode(json)
+      case _ => astForNode(nodeInfo)
     }
   }
 
   protected def astForNode(json: Value): Ast = {
-    val nodeInfo = createBabelNodeInfo(json)
+    astForNode(createBabelNodeInfo(json))
+  }
+
+  protected def astForNode(nodeInfo: BabelNodeInfo): Ast = {
     nodeInfo.node match {
       case ClassDeclaration          => astForClass(nodeInfo, shouldCreateAssignmentCall = true)
       case DeclareClass              => astForClass(nodeInfo, shouldCreateAssignmentCall = true)
@@ -232,7 +235,7 @@ class AstCreator(val config: Config, val usedTypes: mutable.HashSet[String], val
     val nodeInfo = createBabelNodeInfo(json)
     nodeInfo.node match {
       case _: FunctionLike => astForFunctionDeclaration(nodeInfo, shouldCreateFunctionReference = true)
-      case _               => astForNode(json)
+      case _               => astForNode(nodeInfo)
     }
   }
 
