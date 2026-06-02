@@ -4,6 +4,7 @@ import io.joern.javasrc2cpg.passes.{AstCreationPass, OuterClassRefPass, TypeInfe
 import io.joern.x2cpg.X2Cpg.withNewEmptyCpg
 import io.joern.x2cpg.passes.frontend.{JavaConfigFileCreationPass, MetaDataPass, TypeNodePass}
 import io.joern.x2cpg.X2CpgFrontend
+import io.joern.x2cpg.utils.FrontendProfiling
 import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.codepropertygraph.generated.Languages
 import org.slf4j.LoggerFactory
@@ -19,18 +20,23 @@ class JavaSrc2Cpg extends X2CpgFrontend {
   override val defaultConfig = DefaultConfig
 
   override def createCpg(config: Config): Try[Cpg] = {
-    withNewEmptyCpg(config.outputPath, config: Config) { (cpg, config) =>
-      new MetaDataPass(cpg, language, config.inputPath).createAndApply()
-      val astCreationPass = new AstCreationPass(config, cpg)
-      astCreationPass.createAndApply()
-      astCreationPass.sourceParser.cleanupDelombokOutput()
-      astCreationPass.clearJavaParserCaches()
-      astCreationPass.closeTypeSolvers()
-      new OuterClassRefPass(cpg).createAndApply()
-      JavaConfigFileCreationPass(cpg, config = config).createAndApply()
-      if (!config.skipTypeInfPass) {
-        TypeNodePass.withRegisteredTypes(astCreationPass.usedTypes(), cpg).createAndApply()
-        new TypeInferencePass(cpg).createAndApply()
+    FrontendProfiling.run("javasrc2cpg", config.inputPath) {
+      withNewEmptyCpg(config.outputPath, config: Config) { (cpg, config) =>
+        FrontendProfiling.time("MetaDataPass") {
+          new MetaDataPass(cpg, language, config.inputPath).createAndApply()
+        }
+        val astCreationPass = FrontendProfiling.time("AstCreationPass.init") { new AstCreationPass(config, cpg) }
+        FrontendProfiling.metric("sourceFiles", astCreationPass.sourceParser.relativeFilenames.size.toLong)
+        FrontendProfiling.time("AstCreationPass.run") { astCreationPass.createAndApply() }
+        FrontendProfiling.time("cleanup.delombok") { astCreationPass.sourceParser.cleanupDelombokOutput() }
+        FrontendProfiling.time("cleanup.javaparserCaches") { astCreationPass.clearJavaParserCaches() }
+        FrontendProfiling.time("cleanup.typeSolvers") { astCreationPass.closeTypeSolvers() }
+        FrontendProfiling.time("OuterClassRefPass") { new OuterClassRefPass(cpg).createAndApply() }
+        FrontendProfiling.time("JavaConfigFileCreationPass") { JavaConfigFileCreationPass(cpg, config = config).createAndApply() }
+        if (!config.skipTypeInfPass) {
+          FrontendProfiling.time("TypeNodePass") { TypeNodePass.withRegisteredTypes(astCreationPass.usedTypes(), cpg).createAndApply() }
+          FrontendProfiling.time("TypeInferencePass") { new TypeInferencePass(cpg).createAndApply() }
+        }
       }
     }
   }

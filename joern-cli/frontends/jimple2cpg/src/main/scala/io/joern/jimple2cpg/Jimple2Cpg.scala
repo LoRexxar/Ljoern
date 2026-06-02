@@ -1,11 +1,13 @@
 package io.joern.jimple2cpg
 
 import io.joern.jimple2cpg.passes.{AstCreationPass, DeclarationRefPass, SootAstCreationPass}
+import io.joern.jimple2cpg.rewrite.JimpleAstRewriter
 import io.joern.jimple2cpg.util.Decompiler
-import io.joern.jimple2cpg.util.ProgramHandlingUtil.{ClassFile, extractClassesInPackageLayout}
+import io.joern.jimple2cpg.util.ProgramHandlingUtil.{ClassFile, extractClassesInPackageLayout, listClassesInArchive}
 import io.joern.x2cpg.X2Cpg.withNewEmptyCpg
 import io.joern.x2cpg.X2CpgFrontend
 import io.joern.x2cpg.passes.frontend.{JavaConfigFileCreationPass, MetaDataPass, TypeNodePass}
+import io.joern.x2cpg.utils.FrontendProfiling
 import io.shiftleft.semanticcpg.utils.FileUtil.*
 import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.semanticcpg.utils.FileUtil
@@ -73,15 +75,18 @@ class Jimple2Cpg extends X2CpgFrontend {
     *   The file/directory to traverse for class files.
     * @param tmpDir
     *   The directory to place the class files in their package layout
-    * @param recurse
-    *   Whether to unpack recursively
-    * @param depth
-    *   Maximum depth of recursion
     */
-  private def sootLoad(input: Path, tmpDir: Path, recurse: Boolean, depth: Int): List[ClassFile] = {
-    Options.v().set_soot_classpath(tmpDir.absolutePathAsString)
-    Options.v().set_prepend_classpath(true)
-    val classFiles               = loadClassFiles(input, tmpDir, recurse, depth)
+  private def sootLoad(input: Path, tmpDir: Path, config: Config): List[ClassFile] = {
+    val classFiles =
+      if (!config.recurse && Files.isRegularFile(input) && input.extension().exists(x => x == ".jar" || x == ".zip")) {
+        Options.v().set_soot_classpath(input.absolutePathAsString)
+        Options.v().set_prepend_classpath(true)
+        listClassesInArchive(input, tmpDir, isClass = e => e.extension.contains(".class"), isConfigFile = _ => false)
+      } else {
+        Options.v().set_soot_classpath(tmpDir.absolutePathAsString)
+        Options.v().set_prepend_classpath(true)
+        loadClassFiles(input, tmpDir, config.recurse, config.depth)
+      }
     val fullyQualifiedClassNames = classFiles.flatMap(_.fullyQualifiedClassName)
     logger.info(s"Loading ${classFiles.size} program files")
     logger.debug(s"Source files are: ${classFiles.map(_.file.absolutePathAsString)}")
@@ -98,66 +103,95 @@ class Jimple2Cpg extends X2CpgFrontend {
     */
   private def cpgApplyPasses(cpg: Cpg, config: Config, tmpDir: Path): Unit = {
     val input = Paths.get(config.inputPath)
-    configureSoot(config, tmpDir)
-    new MetaDataPass(cpg, language, config.inputPath).createAndApply()
+    val archiveFastPath = !config.recurse && Files.isRegularFile(input) && input.extension().exists(x => x == ".jar" || x == ".zip")
+    FrontendProfiling.time("configureSoot") { configureSoot(config, tmpDir) }
+    FrontendProfiling.time("MetaDataPass") { new MetaDataPass(cpg, language, config.inputPath).createAndApply() }
     val usedTypesFromAstCreation: () => Set[String] = input.extension() match {
       case Some(".apk" | ".dex") if Files.isRegularFile(input) =>
-        sootLoadApk(input, config.android)
+        FrontendProfiling.time("sootLoadApk") { sootLoadApk(input, config.android) }
         { () =>
-          val astCreator = SootAstCreationPass(cpg, config)
-          astCreator.createAndApply()
+          val astCreator = FrontendProfiling.time("SootAstCreationPass.init") { SootAstCreationPass(cpg, config) }
+          FrontendProfiling.time("SootAstCreationPass.run") { astCreator.createAndApply() }
           astCreator.usedTypes()
         }
       case _ =>
-        val classFiles = sootLoad(input, tmpDir, config.recurse, config.depth)
-        decompileClassFiles(classFiles, !config.disableFileContent)
+        val classFiles = FrontendProfiling.time("sootLoad") { sootLoad(input, tmpDir, config) }
+        FrontendProfiling.metric("classFiles", classFiles.size.toLong)
+        val decompiledSources =
+          FrontendProfiling.time("decompileClassFiles") {
+            decompileClassFiles(classFiles, !config.disableFileContent, Option.when(archiveFastPath)(input))
+          }
 
         { () =>
-          val astCreator = AstCreationPass(classFiles, cpg, config)
-          astCreator.createAndApply()
+          val astCreator =
+            FrontendProfiling.time("AstCreationPass.init") { AstCreationPass(classFiles, cpg, config, decompiledSources) }
+          FrontendProfiling.time("AstCreationPass.run") { astCreator.createAndApply() }
+          FrontendProfiling.time("JimpleAstRewriter") { JimpleAstRewriter.run(cpg) }
+          FrontendProfiling.metric("rewriter.totalTmps", JimpleAstRewriter.totalTmps.get())
+          FrontendProfiling.metric("rewriter.fused", JimpleAstRewriter.fusedCount.get())
+          FrontendProfiling.metric("rewriter.dead", JimpleAstRewriter.deadCount.get())
+          FrontendProfiling.metric("rewriter.multiUse", JimpleAstRewriter.multiUseCount.get())
+          FrontendProfiling.metric("rewriter.multiFused", JimpleAstRewriter.multiFusedCount.get())
+          JimpleAstRewriter.multiByRhs.foreach { case (k, v) =>
+            FrontendProfiling.metric(s"rewriter.multi.rhs.$k", v.sum())
+          }
+          JimpleAstRewriter.multiByUseCount.toSeq.sortBy(_._1).foreach { case (k, v) =>
+            FrontendProfiling.metric(s"rewriter.multi.uses$k", v.sum())
+          }
+          JimpleAstRewriter.deadByRhs.foreach { case (k, v) =>
+            FrontendProfiling.metric(s"rewriter.dead.rhs.$k", v.sum())
+          }
           astCreator.usedTypes()
         }
     }
 
-    logger.info("Loading classes to soot")
-    Scene.v().loadNecessaryClasses()
-    logger.info(s"Loaded ${Scene.v().getApplicationClasses.size()} classes")
+    FrontendProfiling.time("Scene.loadNecessaryClasses") {
+      logger.info("Loading classes to soot")
+      Scene.v().loadNecessaryClasses()
+      logger.info(s"Loaded ${Scene.v().getApplicationClasses.size()} classes")
+    }
 
     val usedTypes = usedTypesFromAstCreation()
-    TypeNodePass
-      .withRegisteredTypes(usedTypes, cpg)
-      .createAndApply()
-    DeclarationRefPass(cpg).createAndApply()
-    JavaConfigFileCreationPass(cpg, Option(tmpDir.toString), config).createAndApply()
+    FrontendProfiling.time("TypeNodePass") {
+      TypeNodePass
+        .withRegisteredTypes(usedTypes, cpg)
+        .createAndApply()
+    }
+    FrontendProfiling.time("DeclarationRefPass") { DeclarationRefPass(cpg).createAndApply() }
+    val configFilesRoot = Option.when(!archiveFastPath)(tmpDir.toString)
+    FrontendProfiling.time("JavaConfigFileCreationPass") { JavaConfigFileCreationPass(cpg, configFilesRoot, config).createAndApply() }
   }
 
-  private def decompileClassFiles(classFiles: List[ClassFile], decompileJava: Boolean): Unit = {
-    Option.when(decompileJava) {
-      val decompiler     = new Decompiler(classFiles.map(_.file))
-      val decompiledJava = decompiler.decompile()
-
-      classFiles.foreach { x =>
-        val decompiledJavaSrc = decompiledJava.get(x.fullyQualifiedClassName.get)
-        decompiledJavaSrc match {
-          case Some(src) =>
-            val outputFile = Paths.get(s"${x.file.toString.replace(".class", ".java")}")
-            Files.writeString(outputFile, src)
-          case None => // Do Nothing
-        }
-      }
+  private def decompileClassFiles(
+    classFiles: List[ClassFile],
+    decompileJava: Boolean,
+    archiveInput: Option[Path]
+  ): Map[String, String] = {
+    if (!decompileJava) {
+      Map.empty
+    } else {
+      val inputs = archiveInput.map(List(_)).getOrElse(classFiles.map(_.file))
+      val decompiler = new Decompiler(inputs)
+      decompiler.decompile().toMap
     }
   }
 
-  override def createCpg(config: Config): Try[Cpg] =
-    try {
-      withNewEmptyCpg(config.outputPath, config: Config) { (cpg, config) =>
-        FileUtil.usingTemporaryDirectory("jimple2cpg-") { tmpDir =>
-          cpgApplyPasses(cpg, config, tmpDir)
+  override def createCpg(config: Config): Try[Cpg] = {
+    FrontendProfiling.run("jimple2cpg", config.inputPath) {
+      try {
+        withNewEmptyCpg(config.outputPath, config: Config) { (cpg, config) =>
+          val tmpDir = Files.createTempDirectory("jimple2cpg-")
+          try {
+            cpgApplyPasses(cpg, config, tmpDir)
+          } finally {
+            FrontendProfiling.time("cleanup.tmpDir") { FileUtil.delete(tmpDir) }
+          }
         }
+      } finally {
+        G.reset()
       }
-    } finally {
-      G.reset()
     }
+  }
 
   private def configureSoot(config: Config, outDir: Path): Unit = {
     // set application mode
@@ -175,8 +209,7 @@ class Jimple2Cpg extends X2CpgFrontend {
     // Keep exceptions
     Options.v().set_show_exception_dests(true)
     Options.v().set_omit_excepting_unit_edges(false)
-    // output jimple
-    Options.v().set_output_format(Options.output_format_jimple)
+    Options.v().set_output_format(Options.output_format_none)
     Options.v().set_output_dir(outDir.absolutePathAsString)
 
     Options.v().set_dynamic_dir(config.dynamicDirs.asJava)

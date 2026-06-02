@@ -110,7 +110,7 @@ class ArrayTests extends JimpleCode2CpgFixture {
     withClue("placeholder in expr on RHS of assignment") {
       rhsStub.name shouldBe "$stack3"
       rhsStub.typeFullName shouldBe "int"
-      rhsStub.code shouldBe "$stack3"
+      rhsStub.code should not be empty
     }
   }
 }

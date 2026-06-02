@@ -1305,8 +1305,8 @@ object RustNodeSyntax {
     def `type`: Option[Type] =
       _children.find(child => _typeKinds.contains(child("nodeKind").str)).map(createRustNode(_).asInstanceOf[Type])
     def eqToken: EqToken = createRustNode(_childrenByKind("EQ").head).asInstanceOf[EqToken]
-    def expr: Expr =
-      createRustNode(_children.find(child => _exprKinds.contains(child("nodeKind").str)).get).asInstanceOf[Expr]
+    def expr: Option[Expr] =
+      _children.find(child => _exprKinds.contains(child("nodeKind").str)).map(createRustNode(_).asInstanceOf[Expr])
     def letElse: Option[LetElse] =
       _childrenByKind.get("LET_ELSE").flatMap(_.headOption).map(createRustNode(_).asInstanceOf[LetElse])
     def semicolonToken: SemicolonToken = createRustNode(_childrenByKind("SEMICOLON").head).asInstanceOf[SemicolonToken]

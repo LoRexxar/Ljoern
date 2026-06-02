@@ -3,6 +3,7 @@ package io.joern.pysrc2cpg
 import io.joern.pysrc2cpg.memop.MemoryOperation
 import io.joern.pysrc2cpg.memop.MemoryOperation.{Del, Load, Store}
 import io.joern.pythonparser.{AstPrinter, ast}
+import io.joern.x2cpg.Defines
 import io.joern.x2cpg.ValidationMode
 import io.joern.x2cpg.frontendspecific.pysrc2cpg.PythonOperators
 import io.shiftleft.codepropertygraph.generated.ControlStructureTypes
@@ -148,7 +149,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
   // for comprehension target assignment.
   protected def createValueToTargetsDecomposition(
     targets: Iterable[ast.iexpr],
-    valueNode: NewNode,
+    valueProvider: () => NewNode,
     lineAndColumn: LineAndColumn
   ): Iterable[NewNode] = {
     if (
@@ -160,52 +161,43 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
       // no decomposition.
       val targetNode = convert(targets.head)
 
-      Iterable.single(createAssignment(targetNode, valueNode, lineAndColumn))
+      Iterable.single(createAssignment(targetNode, valueProvider(), lineAndColumn))
     } else {
       // Lowering of x, (y,z) = a = b = c:
       // Note: No surrounding block is created. This is the duty of the caller.
-      //     tmp = c
-      //     x = tmp[0]
-      //     y = tmp[1][0]
-      //     z = tmp[1][1]
+      //     x = c[0]
+      //     y = c[1][0]
+      //     z = c[1][1]
       //     a = c
       //     b = c
       // Lowering of for x, (y, z) in c:
-      //     tmp = c
-      //     x = tmp[0]
-      //     y = tmp[1][0]
-      //     z = tmp[1][1]
+      //     x = c[0]
+      //     y = c[1][0]
+      //     z = c[1][1]
       // Lowering of x, *y, z = someList:
-      //     tmp = someList
-      //     x = tmp[0]
-      //     y = slice(tmp, 1, -1, 1)
-      //     z = tmp[-1]
-      val tmpVariableName = getUnusedName()
-
-      val tmpVariableAssignNode =
-        createAssignmentToIdentifier(tmpVariableName, valueNode, lineAndColumn)
-
+      //     x = someList[0]
+      //     y = slice(someList, 1, -1, 1)
+      //     z = someList[-1]
       val loweredAssignNodes = mutable.ArrayBuffer.empty[NewNode]
-      loweredAssignNodes.append(tmpVariableAssignNode)
 
       targets.foreach { target =>
         val targetWithAccessChains = getTargetsWithAccessChains(target)
         targetWithAccessChains.foreach { case (trgt, accessChain, starredInfoOpt) =>
-          val targetNode        = convert(trgt)
-          val tmpIdentifierNode = createIdentifierNode(tmpVariableName, Load, lineAndColumn)
+          val targetNode = convert(trgt)
+          val baseValue  = valueProvider()
 
           val sourceNode = starredInfoOpt match {
             case Some(starredInfo) =>
               val baseNode = if (accessChain.tail.nonEmpty) {
-                createIndexAccessChain(tmpIdentifierNode, accessChain.tail, lineAndColumn)
+                createIndexAccessChain(baseValue, accessChain.tail, lineAndColumn)
               } else {
-                tmpIdentifierNode
+                baseValue
               }
               val upperIndex = if (starredInfo.countAfter == 0) None else Some(-starredInfo.countAfter)
               createSliceCall(baseNode, starredInfo.position, upperIndex, lineAndColumn)
 
             case None =>
-              createIndexAccessChain(tmpIdentifierNode, accessChain, lineAndColumn)
+              createIndexAccessChain(baseValue, accessChain, lineAndColumn)
           }
 
           val targetAssignNode = createAssignment(targetNode, sourceNode, lineAndColumn)
@@ -301,7 +293,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
   }
 
   // Extracts plain names, starred names and name or starred name elements from tuples and lists.
-  private def extractComprehensionSpecialVariableNames(target: ast.iexpr): Iterable[ast.Name] = {
+  protected def extractComprehensionSpecialVariableNames(target: ast.iexpr): Iterable[ast.Name] = {
     target match {
       case name: ast.Name =>
         name :: Nil
@@ -355,7 +347,9 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     callAstNode: Option[ast.iast]
   ): NewCall = {
     val code     = codeForCallNode(receiverNode, argumentNodes, keywordArguments, callAstNode)
-    val callNode = nodeBuilder.callNode(code, name, DispatchTypes.DYNAMIC_DISPATCH, lineAndColumn)
+    val methodFullName = resolveMethodFullNameForCall(name, callAstNode)
+    val callNode =
+      nodeBuilder.callNode(code, name, methodFullName, DispatchTypes.DYNAMIC_DISPATCH, lineAndColumn)
 
     edgeBuilder.astEdge(receiverNode, callNode, 0)
     edgeBuilder.receiverEdge(receiverNode, callNode)
@@ -386,7 +380,9 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     callAstNode: Option[ast.iast]
   ): NewCall = {
     val code     = codeForCallNode(receiverNode, argumentNodes, keywordArguments, callAstNode)
-    val callNode = nodeBuilder.callNode(code, name, DispatchTypes.DYNAMIC_DISPATCH, lineAndColumn)
+    val methodFullName = resolveMethodFullNameForCall(name, callAstNode)
+    val callNode =
+      nodeBuilder.callNode(code, name, methodFullName, DispatchTypes.DYNAMIC_DISPATCH, lineAndColumn)
 
     edgeBuilder.astEdge(receiverNode, callNode, 0)
     edgeBuilder.receiverEdge(receiverNode, callNode)
@@ -409,6 +405,52 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     callNode
   }
 
+  private def resolveMethodFullNameForCall(name: String, callAstNode: Option[ast.iast]): String = {
+    callAstNode match {
+      case Some(call: ast.Call) =>
+        call.func match {
+          case ast.Name(id, _) if id.nonEmpty =>
+            resolveSimpleCall(id)
+          case attr: ast.Attribute =>
+            resolveAttributeCall(attr)
+          case _ =>
+            if (name.nonEmpty) scope.unresolvedCall(name) else Defines.DynamicCallUnknownFullName
+        }
+      case _ =>
+        Defines.DynamicCallUnknownFullName
+    }
+  }
+
+  private def resolveSimpleCall(name: String): String = {
+    scope
+      .resolveImported(name)
+      .orElse {
+        if (scope.isTopLevelFunction(name) || scope.isTopLevelClass(name)) Some(fullNameInCurrentModule(name)) else None
+      }
+      .getOrElse(scope.unresolvedCall(name))
+  }
+
+  private def resolveAttributeCall(attribute: ast.Attribute): String = {
+    attribute.value match {
+      case ast.Name(baseName, _) =>
+        val baseFullName =
+          scope.resolveImported(baseName).orElse(if (scope.isTopLevelClass(baseName)) Some(fullNameInCurrentModule(baseName)) else None)
+        baseFullName match {
+          case Some(prefix) if prefix.nonEmpty => s"$prefix.${attribute.attr}"
+          case Some(_)                         => attribute.attr
+          case None                            => guessInCurrentModule(baseName :: attribute.attr :: Nil)
+        }
+      case _ =>
+        scope.unresolvedCall(attribute.attr)
+    }
+  }
+
+  private def fullNameInCurrentModule(name: String): String =
+    (scope.moduleFullName :: Nil).filter(_.nonEmpty).appended(name).mkString(".")
+
+  private def guessInCurrentModule(parts: List[String]): String =
+    (scope.moduleFullName :: parts).filter(_.nonEmpty).mkString(".")
+
   // NOTE if xMayHaveSideEffects == false, function x must return a distinct
   // tree/node for each invocation!!!
   // Otherwise the same tree/node may get placed in different places of the AST
@@ -429,19 +471,10 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     keywordArguments: Iterable[(String, NewNode)],
     callAstNode: Option[ast.iast]
   ): NewNode = {
-    if (xMayHaveSideEffects) {
-      val tmpVarName    = getUnusedName()
-      val tmpAssignCall = createAssignmentToIdentifier(tmpVarName, x(), lineAndColumn)
-      val receiverNode =
-        createFieldAccess(createIdentifierNode(tmpVarName, Load, lineAndColumn), y, lineAndColumn)
-      val instanceNode = createIdentifierNode(tmpVarName, Load, lineAndColumn)
-      val instanceCallNode =
-        createInstanceCall(receiverNode, instanceNode, y, lineAndColumn, argumentNodes, keywordArguments, callAstNode)
-      createBlock(tmpAssignCall :: instanceCallNode :: Nil, lineAndColumn)
-    } else {
-      val receiverNode = createFieldAccess(x(), y, lineAndColumn)
-      createInstanceCall(receiverNode, x(), y, lineAndColumn, argumentNodes, keywordArguments, callAstNode)
-    }
+    val xForReceiver = x()
+    val xForInstance = x()
+    val receiverNode = createFieldAccess(xForReceiver, y, lineAndColumn)
+    createInstanceCall(receiverNode, xForInstance, y, lineAndColumn, argumentNodes, keywordArguments, callAstNode)
   }
 
   // NOTE: The argument indicies start from 0!
@@ -460,7 +493,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
         .map { case (keyword: String, argNode) => keyword + " = " + codeOf(argNode) }
         .mkString(", ") +
       ")"
-    val callNode = nodeBuilder.callNode(code, methodFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, name, methodFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     var argIndex = 0
     argumentNodes.foreach { argumentNode =>
@@ -486,7 +519,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
 
     val (operatorCode, methodFullName) = opCodeAndFullName()
     val code     = operands.map(operandNode => codeOf(operandNode)).mkString(" " + operatorCode + " ")
-    val callNode = nodeBuilder.callNode(code, methodFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, methodFullName, methodFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, operands)
 
@@ -502,7 +535,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     val (opCode, opFullName) = opCodeAndFullName()
 
     val code     = codeOf(lhsNode) + " " + opCode + " " + codeOf(rhsNode)
-    val callNode = nodeBuilder.callNode(code, opFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, opFullName, opFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, lhsNode, rhsNode)
     callNode
@@ -516,7 +549,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     operands: NewNode*
   ): NewCall = {
     val code     = operands.map(codeOf).mkString(codeStart, ", ", codeEnd)
-    val callNode = nodeBuilder.callNode(code, opFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, opFullName, opFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, operands)
 
@@ -525,7 +558,8 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
 
   protected def createStarredUnpackOperatorCall(unpackOperand: NewNode, lineAndColumn: LineAndColumn): NewNode = {
     val code     = "*" + codeOf(unpackOperand)
-    val callNode = nodeBuilder.callNode(code, "<operator>.starredUnpack", DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode =
+      nodeBuilder.callNode(code, "<operator>.starredUnpack", "<operator>.starredUnpack", DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, unpackOperand)
     callNode
@@ -533,7 +567,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
 
   protected def createAssignment(lhsNode: NewNode, rhsNode: NewNode, lineAndColumn: LineAndColumn): NewNode = {
     val code     = codeOf(lhsNode) + " = " + codeOf(rhsNode)
-    val callNode = nodeBuilder.callNode(code, Operators.assignment, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, Operators.assignment, Operators.assignment, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, lhsNode, rhsNode)
     // Do not include imports or function pointers
@@ -565,7 +599,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     lineAndColumn: LineAndColumn
   ): NewNode = {
     val code     = codeOf(lhsNode) + " " + operatorCode + " " + codeOf(rhsNode)
-    val callNode = nodeBuilder.callNode(code, operatorFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, operatorFullName, operatorFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, lhsNode, rhsNode)
 
@@ -588,7 +622,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
   protected def createIndexAccess(baseNode: NewNode, indexNode: NewNode, lineAndColumn: LineAndColumn): NewNode = {
     val code = codeOf(baseNode) + "[" + codeOf(indexNode) + "]"
     val indexAccessNode =
-      nodeBuilder.callNode(code, Operators.indexAccess, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+      nodeBuilder.callNode(code, Operators.indexAccess, Operators.indexAccess, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(indexAccessNode, 1, baseNode, indexNode)
 
@@ -611,7 +645,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     val upperStr = upperIndex.map(_.toString).getOrElse("")
     val code     = s"${codeOf(baseNode)}[${lowerIndex}:${upperStr}:1]"
     val sliceCallNode =
-      nodeBuilder.callNode(code, PythonOperators.slice, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+      nodeBuilder.callNode(code, PythonOperators.slice, PythonOperators.slice, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     val args = baseNode :: lowerNode :: upperNode :: stepNode :: Nil
     addAstChildrenAsArguments(sliceCallNode, 1, args)
@@ -639,7 +673,7 @@ trait PythonAstVisitorHelpers(implicit withSchemaValidation: ValidationMode) { t
     val fieldIdNode = nodeBuilder.fieldIdentifierNode(fieldName, lineAndColumn)
 
     val code     = codeOf(baseNode) + "." + codeOf(fieldIdNode)
-    val callNode = nodeBuilder.callNode(code, Operators.fieldAccess, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+    val callNode = nodeBuilder.callNode(code, Operators.fieldAccess, Operators.fieldAccess, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
     addAstChildrenAsArguments(callNode, 1, baseNode, fieldIdNode)
     callNode

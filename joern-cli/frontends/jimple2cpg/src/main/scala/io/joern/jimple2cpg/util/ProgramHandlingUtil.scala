@@ -21,6 +21,145 @@ object ProgramHandlingUtil {
 
   private val logger = LoggerFactory.getLogger(ProgramHandlingUtil.getClass)
 
+  private def getPackagePathFromByteCode(bytes: Array[Byte]): Option[String] = {
+    val cr = new ClassReader(bytes)
+    sealed class ClassNameVisitor extends ClassVisitor(Opcodes.ASM9) {
+      var path: Option[String] = None
+      override def visit(
+        version: Int,
+        access: Int,
+        name: String,
+        signature: String,
+        superName: String,
+        interfaces: Array[String]
+      ): Unit = {
+        path = Some(name)
+      }
+    }
+    val rootVisitor = new ClassNameVisitor()
+    cr.accept(rootVisitor, SKIP_CODE)
+    rootVisitor.path
+  }
+
+  private def extractClassesFromArchiveDirectly(
+    archive: Path,
+    destDir: Path,
+    isClass: Entry => Boolean,
+    isConfigFile: Entry => Boolean
+  ): List[ClassFile] = {
+    Using.resource(new ZipFile(archive.absolutePathAsString)) { zipFile =>
+      zipFile.entries().asScala.flatMap { zipEntry =>
+        val entry = Entry(zipEntry, zipFile)
+        if (zipEntry.isDirectory || entry.isZipSlip) {
+          None
+        } else if (isClass(entry)) {
+          val entryName      = zipEntry.getName
+          val packagePathOpt = normalizeClassEntryPath(entryName)
+          packagePathOpt match {
+            case Some(packagePath) =>
+              val destFile = destDir / s"$packagePath.class"
+              if (Files.exists(destFile)) {
+                logger.warn(s"Overwriting class file: ${destFile.toAbsolutePath}")
+              }
+              Files.createDirectories(destFile.getParent)
+              Using.resource(zipFile.getInputStream(zipEntry)) { is =>
+                Files.copy(is, destFile, StandardCopyOption.REPLACE_EXISTING)
+              }
+              Some(ClassFile(destFile, Some(packagePath)))
+            case None =>
+              val bytes          = Using.resource(zipFile.getInputStream(zipEntry))(_.readAllBytes())
+              val packagePathOpt = Try(getPackagePathFromByteCode(bytes)).getOrElse(None)
+              packagePathOpt.map { packagePath =>
+                val destFile = destDir / s"$packagePath.class"
+                if (Files.exists(destFile)) {
+                  logger.warn(s"Overwriting class file: ${destFile.toAbsolutePath}")
+                }
+                Files.createDirectories(destFile.getParent)
+                Files.write(destFile, bytes)
+                ClassFile(destFile, Some(packagePath))
+              }
+          }
+        } else if (isConfigFile(entry)) {
+          val destFile = destDir / zipEntry.getName.replace('\\', '/')
+          if (Files.exists(destFile)) {
+            logger.warn(s"Overwriting file: ${destFile.toAbsolutePath}")
+          }
+          Files.createDirectories(destFile.getParent)
+          Using.resource(zipFile.getInputStream(zipEntry)) { is =>
+            Files.copy(is, destFile, StandardCopyOption.REPLACE_EXISTING)
+          }
+          None
+        } else {
+          None
+        }
+      }.toList
+    }
+  }
+
+  def listClassesInArchive(archive: Path, destDir: Path, isClass: Entry => Boolean, isConfigFile: Entry => Boolean): List[ClassFile] = {
+    Using.resource(new ZipFile(archive.absolutePathAsString)) { zipFile =>
+      zipFile.entries().asScala.flatMap { zipEntry =>
+        val entry = Entry(zipEntry, zipFile)
+        if (zipEntry.isDirectory || entry.isZipSlip) {
+          None
+        } else if (isClass(entry)) {
+          val entryName = zipEntry.getName
+          val packagePathOpt = normalizeClassEntryPath(entryName).orElse {
+            val bytes = Using.resource(zipFile.getInputStream(zipEntry))(_.readAllBytes())
+            Try(getPackagePathFromByteCode(bytes)).getOrElse(None)
+          }
+          packagePathOpt.map { packagePath =>
+            val destFile = destDir / s"$packagePath.class"
+            ClassFile(destFile, Some(packagePath))
+          }
+        } else if (isConfigFile(entry)) {
+          val destFile = destDir / zipEntry.getName.replace('\\', '/')
+          if (Files.exists(destFile)) {
+            logger.warn(s"Overwriting file: ${destFile.toAbsolutePath}")
+          }
+          Files.createDirectories(destFile.getParent)
+          Using.resource(zipFile.getInputStream(zipEntry)) { is =>
+            Files.copy(is, destFile, StandardCopyOption.REPLACE_EXISTING)
+          }
+          None
+        } else {
+          None
+        }
+      }.toList
+    }
+  }
+
+  def normalizeClassEntryPath(raw: String): Option[String] = {
+    val normalizedSeparators = raw.replace('\\', '/')
+
+    val entryPathOpt =
+      if (normalizedSeparators.contains("extract-archive")) {
+        val idx = normalizedSeparators.indexOf("extract-archive")
+        if (idx == -1) None
+        else {
+          val rel = normalizedSeparators
+            .substring(idx)
+            .split("/")
+            .drop(1)
+            .mkString("/")
+          Some(rel)
+        }
+      } else {
+        val isAbsolute =
+          normalizedSeparators.matches("^[A-Za-z]:/.*") || normalizedSeparators.startsWith("/") || normalizedSeparators
+            .startsWith("//")
+        if (isAbsolute) None else Some(normalizedSeparators)
+      }
+
+    entryPathOpt
+      .map { entryPath =>
+        if (entryPath.startsWith("BOOT-INF/classes/")) entryPath.stripPrefix("BOOT-INF/classes/")
+        else if (entryPath.startsWith("WEB-INF/classes/")) entryPath.stripPrefix("WEB-INF/classes/")
+        else entryPath.replaceFirst("^META-INF/versions/\\d+/", "")
+      }
+      .flatMap(path => Option.when(path.endsWith(".class"))(path.stripSuffix(".class")))
+  }
+
   /** Common properties of a File and ZipEntry, used to determine whether a file in a directory or an entry in an
     * archive is worth emitting/extracting
     */
@@ -194,6 +333,9 @@ object ProgramHandlingUtil {
   }
 
   object ClassFile {
+    private def getPackagePathFromExtractedPath(file: Path): Option[String] =
+      normalizeClassEntryPath(file.toString)
+
     private def getPackagePathFromByteCode(is: InputStream): Option[String] = {
       val cr = new ClassReader(is)
       sealed class ClassNameVisitor extends ClassVisitor(Opcodes.ASM9) {
@@ -230,6 +372,9 @@ object ProgramHandlingUtil {
           }
           .getOrElse(None)
       }
+
+    private def getPackagePath(file: Path): Option[String] =
+      getPackagePathFromExtractedPath(file).orElse(getPackagePathFromByteCode(file))
   }
 
   sealed trait EntryFile {
@@ -292,7 +437,7 @@ object ProgramHandlingUtil {
 
   sealed class ClassFile(val file: Path, val packagePath: Option[String]) extends EntryFile {
 
-    def this(file: Path) = this(file, ClassFile.getPackagePathFromByteCode(file))
+    def this(file: Path) = this(file, ClassFile.getPackagePath(file))
 
     private val components: Option[Array[String]] = packagePath.map(_.split("/"))
 
@@ -329,12 +474,16 @@ object ProgramHandlingUtil {
     recurse: Boolean,
     depth: Int
   ): List[ClassFile] =
-    FileUtil
-      .usingTemporaryDirectory("extract-classes-") { tmpDir =>
-        extractClassesToTmp(src, tmpDir, isArchive, isClass, isConfigFile, recurse: Boolean, depth: Int).iterator
-          .flatMap(_.copyToPackageLayoutIn(destDir))
-          .collect { case x: ClassFile => x }
-          .toList
-      }
+    if (!recurse && Files.isRegularFile(src) && isArchive(Entry(src))) {
+      extractClassesFromArchiveDirectly(src, destDir, isClass, isConfigFile)
+    } else {
+      FileUtil
+        .usingTemporaryDirectory("extract-classes-") { tmpDir =>
+          extractClassesToTmp(src, tmpDir, isArchive, isClass, isConfigFile, recurse: Boolean, depth: Int).iterator
+            .flatMap(_.copyToPackageLayoutIn(destDir))
+            .collect { case x: ClassFile => x }
+            .toList
+        }
+    }
 
 }

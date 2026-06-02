@@ -74,6 +74,24 @@ class BytecodeIndexedClassPathTests extends AnyFreeSpec with Matchers with Befor
         classPath.find("does.not.Exist") shouldBe null
       }
     }
+
+    "should filter indexed classes by allowlist prefix derived from entry path" in {
+      jarTestWithEntries(
+        ClassEntry("com.example.Allowed", "com/example/Allowed.class"),
+        ClassEntry("org.other.Blocked", "org/other/Blocked.class"),
+        ClassEntry("com.example.FromClassesPrefix", "classes/com/example/FromClassesPrefix.class"),
+        ClassEntry("com.example.FromMultiRelease", "META-INF/versions/9/com/example/FromMultiRelease.class")
+      ) { jarPath =>
+        val classPath = new BytecodeIndexedClassPath(jarPath.toString, allowlist = Seq("com.example"))
+        classPath.knownClassNames should contain allOf (
+          "com.example.Allowed",
+          "com.example.FromClassesPrefix",
+          "com.example.FromMultiRelease"
+        )
+        classPath.knownClassNames should not contain "org.other.Blocked"
+        classPath.openClassfile("org.other.Blocked") shouldBe null
+      }
+    }
   }
 
   "JarTypeSolver with non-standard JAR" - {
@@ -116,6 +134,7 @@ class BytecodeIndexedClassPathTests extends AnyFreeSpec with Matchers with Befor
         combinedSolver.tryToSolveType("repackaged.Bar").isSolved shouldBe false
       }
     }
+
   }
 
   private case class ClassEntry(className: String, entryPath: String)

@@ -7,6 +7,7 @@ import io.joern.x2cpg.frontendspecific.pysrc2cpg.Constants.builtinPrefix
 import io.joern.pythonparser.{AstPrinter, ast}
 import io.joern.pythonparser.ast.{Arguments, MatchAs, iast, iexpr, istmt}
 import io.joern.x2cpg.frontendspecific.pysrc2cpg.Constants
+import io.joern.x2cpg.frontendspecific.pysrc2cpg.PythonOperators
 import io.joern.x2cpg.{AstCreatorBase, ValidationMode}
 import io.shiftleft.codepropertygraph.generated.*
 import io.shiftleft.codepropertygraph.generated.nodes.{NewCall, NewIdentifier, NewNode, NewTypeDecl}
@@ -31,12 +32,15 @@ class PythonAstVisitor(
   relFileName: String,
   protected val nodeToCode: NodeToCode,
   version: PythonVersion,
-  enableFileContent: Boolean
+  enableFileContent: Boolean,
+  moduleFullName: String,
+  symbolSummary: PythonSymbolSummary
 )(implicit withSchemaValidation: ValidationMode)
     extends AstCreatorBase[ast.iast, PythonAstVisitor](relFileName)
     with PythonAstVisitorHelpers {
 
   private val redefintionSuffix = "$redefinition"
+  protected val scope           = new PythonScope(moduleFullName, symbolSummary)
 
   private val diffGraph     = Cpg.newDiffGraphBuilder
   protected val nodeBuilder = new NodeBuilder(diffGraph)
@@ -93,7 +97,7 @@ class PythonAstVisitor(
     edgeBuilder.astEdge(namespaceBlockNode, fileNode, 1)
     contextStack.setFileNamespaceBlock(namespaceBlockNode)
 
-    val methodFullName = calculateFullNameFromContext(Constants.moduleName)
+    val methodFullName = fullNameOfDecl(Constants.moduleName)
 
     val firstLineAndCol = module.stmts.headOption.map(lineAndColOf)
     val lastLineAndCol  = module.stmts.lastOption.map(lineAndColOf)
@@ -349,7 +353,7 @@ class PythonAstVisitor(
         case None =>
           ""
       }
-    val methodFullName = calculateFullNameFromContext(methodName) + suffix
+    val methodFullName = fullNameOfDecl(methodName) + suffix
 
     val methodRefNode =
       nodeBuilder.methodRefNode("def " + methodName + "(...)", methodFullName, lineAndColumn)
@@ -451,7 +455,7 @@ class PythonAstVisitor(
   def convert(classDef: ast.ClassDef): NewNode = {
     // Create type for the meta class object
     val metaTypeDeclName     = classDef.name + metaClassSuffix
-    val metaTypeDeclFullName = calculateFullNameFromContext(metaTypeDeclName)
+    val metaTypeDeclFullName = fullNameOfDecl(metaTypeDeclName)
 
     val metaTypeNode = nodeBuilder.typeNode(metaTypeDeclName, metaTypeDeclFullName)
     val metaTypeDeclNode =
@@ -466,18 +470,13 @@ class PythonAstVisitor(
 
     // Create type for class instances
     val instanceTypeDeclName     = classDef.name
-    val instanceTypeDeclFullName = calculateFullNameFromContext(instanceTypeDeclName)
+    val instanceTypeDeclFullName = fullNameOfDecl(instanceTypeDeclName)
 
     // TODO for now we just take the code of the base expression and pretend they are full names, converting special
     //  nodes as we go.
     def handleInheritance(fs: List[ast.iexpr]): List[String] = fs match {
       case (x: ast.Call) :: xs =>
-        val node       = convert(x)
-        val parent     = contextStack.astParent
-        val tmpVar     = createIdentifierNode(getUnusedName(), Store, lineAndColOf(x))
-        val assignment = createAssignment(tmpVar, node, lineAndColOf(x))
-        diffGraph.addEdge(parent, assignment, EdgeTypes.AST)
-        tmpVar.name +: handleInheritance(xs)
+        nodeToCode.getCode(x) +: handleInheritance(xs)
       case x :: xs =>
         nodeToCode.getCode(x) +: handleInheritance(xs)
       case Nil => Nil
@@ -655,7 +654,7 @@ class PythonAstVisitor(
     lineAndColumn: LineAndColumn
   ): nodes.NewMethod = {
     val adapterMethodName     = adaptedMethodName + "<metaClassAdapter>"
-    val adapterMethodFullName = calculateFullNameFromContext(adapterMethodName)
+    val adapterMethodFullName = fullNameOfDecl(adapterMethodName)
 
     createMethod(
       adapterMethodName,
@@ -743,7 +742,7 @@ class PythonAstVisitor(
     instanceTypeDeclFullName: String
   ): nodes.NewMethod = {
     val methodName     = "<metaClassCallHandler>"
-    val methodFullName = calculateFullNameFromContext(methodName)
+    val methodFullName = fullNameOfDecl(methodName)
 
     // We need to drop the "self" parameter either from the position only or normal parameters
     // because "self" is not passed through but rather created in __new__.
@@ -795,7 +794,7 @@ class PythonAstVisitor(
   // TODO handle kwArg
   private def createFakeNewMethod(initParameters: ast.Arguments): nodes.NewMethod = {
     val newMethodName         = "<fakeNew>"
-    val newMethodStubFullName = calculateFullNameFromContext(newMethodName)
+    val newMethodStubFullName = fullNameOfDecl(newMethodName)
 
     // We need to drop the "self" parameter either from the position only or normal parameters
     // because "self" is not passed through but rather created in __new__.
@@ -855,7 +854,8 @@ class PythonAstVisitor(
     val deleteArgs = delete.targets.map(convert)
 
     val code     = "del " + deleteArgs.map(codeOf).mkString(", ")
-    val callNode = nodeBuilder.callNode(code, "<operator>.delete", DispatchTypes.STATIC_DISPATCH, lineAndColOf(delete))
+    val callNode =
+      nodeBuilder.callNode(code, "<operator>.delete", "<operator>.delete", DispatchTypes.STATIC_DISPATCH, lineAndColOf(delete))
 
     addAstChildrenAsArguments(callNode, 1, deleteArgs)
     callNode
@@ -863,7 +863,7 @@ class PythonAstVisitor(
 
   def convert(assign: ast.Assign): nodes.NewNode = {
     val loweredNodes =
-      createValueToTargetsDecomposition(assign.targets, convert(assign.value), lineAndColOf(assign))
+      createValueToTargetsDecomposition(assign.targets, () => convert(assign.value), lineAndColOf(assign))
 
     val assignmentsToMembers =
       if (contextStack.isClassContext) {
@@ -992,39 +992,36 @@ class PythonAstVisitor(
     isAsync: Boolean,
     lineAndColumn: LineAndColumn
   ): nodes.NewNode = {
-    val iterVariableName = getUnusedName()
-    val iterExprIterCallNode =
-      createXDotYCall(
-        () => convert(iter),
-        "__iter__",
-        xMayHaveSideEffects = !iter.isInstanceOf[ast.Name],
-        lineAndColumn,
-        Nil,
-        Nil,
-        None
-      )
-    val iterAssignNode =
-      createAssignmentToIdentifier(iterVariableName, iterExprIterCallNode, lineAndColumn)
-
     val conditionNode = nodeBuilder.unknownNode("iteratorNonEmptyOrException", "", lineAndColumn)
 
     val controlStructureNode =
       nodeBuilder.controlStructureNode("while ... : ...", ControlStructureTypes.WHILE, lineAndColumn)
     edgeBuilder.conditionEdge(conditionNode, controlStructureNode)
 
-    val iterNextCallNode =
-      createXDotYCall(
-        () => createIdentifierNode(iterVariableName, Load, lineAndColumn),
-        "__next__",
-        xMayHaveSideEffects = false,
-        lineAndColumn,
-        Nil,
-        Nil,
-        None
-      )
-
     val loweredAssignNodes =
-      createValueToTargetsDecomposition(Iterable.single(target), iterNextCallNode, lineAndColumn)
+      createValueToTargetsDecomposition(
+        Iterable.single(target),
+        () =>
+          createXDotYCall(
+            () =>
+              createXDotYCall(
+                () => convert(iter),
+                "__iter__",
+                xMayHaveSideEffects = !iter.isInstanceOf[ast.Name],
+                lineAndColumn,
+                Nil,
+                Nil,
+                None
+              ),
+            "__next__",
+            xMayHaveSideEffects = true,
+            lineAndColumn,
+            Nil,
+            Nil,
+            None
+          ),
+        lineAndColumn
+      )
 
     val blockStmtNodes = mutable.ArrayBuffer.empty[nodes.NewNode]
     blockStmtNodes.appendAll(loweredAssignNodes)
@@ -1055,7 +1052,7 @@ class PythonAstVisitor(
       edgeBuilder.falseBodyEdge(elseBlockNode, controlStructureNode)
     }
 
-    createBlock(iterAssignNode :: controlStructureNode :: Nil, lineAndColumn)
+    createBlock(controlStructureNode :: Nil, lineAndColumn)
   }
 
   def convert(astWhile: ast.While): nodes.NewNode = {
@@ -1164,46 +1161,26 @@ class PythonAstVisitor(
   //       exit(manager, None, None, None)
   private def convertWithItem(withItem: ast.Withitem, suite: collection.Seq[nodes.NewNode]): nodes.NewNode = {
     val lineAndCol            = lineAndColOf(withItem.context_expr)
-    val managerIdentifierName = getUnusedName("manager")
-
-    val assignmentToManager =
-      createAssignmentToIdentifier(managerIdentifierName, convert(withItem.context_expr), lineAndCol)
-
-    val enterIdentifierName = getUnusedName("enter")
-    val assignmentToEnter = createAssignmentToIdentifier(
-      enterIdentifierName,
-      createFieldAccess(createIdentifierNode(managerIdentifierName, Load, lineAndCol), "__enter__", lineAndCol),
-      lineAndCol
-    )
-
-    val exitIdentifierName = getUnusedName("exit")
-    val assignmentToExit = createAssignmentToIdentifier(
-      exitIdentifierName,
-      createFieldAccess(createIdentifierNode(managerIdentifierName, Load, lineAndCol), "__exit__", lineAndCol),
-      lineAndCol
-    )
-
-    val valueIdentifierName = getUnusedName("value")
-    val assignmentToValue = createAssignmentToIdentifier(
-      valueIdentifierName,
+    def managerExpr(): nodes.NewNode = convert(withItem.context_expr)
+    def enterCallExpr(): nodes.NewNode = createFieldAccess(managerExpr(), "__enter__", lineAndCol)
+    def exitCallExpr(): nodes.NewNode = createFieldAccess(managerExpr(), "__exit__", lineAndCol)
+    def valueExpr(): nodes.NewNode =
       createInstanceCall(
-        createIdentifierNode(enterIdentifierName, Load, lineAndCol),
-        createIdentifierNode(managerIdentifierName, Load, lineAndCol),
+        enterCallExpr(),
+        managerExpr(),
         "",
         lineAndCol,
         Nil,
         Nil,
         None
-      ),
-      lineAndCol
-    )
+      )
 
     val tryBody =
       withItem.optional_vars match {
         case Some(optionalVar) =>
           val loweredTargetAssignNodes = createValueToTargetsDecomposition(
             withItem.optional_vars,
-            createIdentifierNode(valueIdentifierName, Load, lineAndCol),
+            () => valueExpr(),
             lineAndCol
           )
 
@@ -1222,8 +1199,8 @@ class PythonAstVisitor(
 
     val finalBlockStmts =
       createInstanceCall(
-        createIdentifierNode("__exit__", Load, lineAndCol),
-        createIdentifierNode(managerIdentifierName, Load, lineAndCol),
+        exitCallExpr(),
+        managerExpr(),
         "",
         lineAndCol,
         Nil,
@@ -1232,15 +1209,7 @@ class PythonAstVisitor(
       ) :: Nil
 
     val tryBlock = createTry(tryBody, Nil, finalBlockStmts, Nil, lineAndCol)
-
-    val blockStmts = mutable.ArrayBuffer.empty[nodes.NewNode]
-    blockStmts.append(assignmentToManager)
-    blockStmts.append(assignmentToEnter)
-    blockStmts.append(assignmentToExit)
-    blockStmts.append(assignmentToValue)
-    blockStmts.append(tryBlock)
-
-    createBlock(blockStmts, lineAndCol)
+    createBlock(tryBlock :: Nil, lineAndCol)
   }
 
   // TODO add case pattern and guard statements to not just as string in the JUMP_TARGET to the CPG
@@ -1288,7 +1257,8 @@ class PythonAstVisitor(
       excNodeOption.map(excNode => " " + codeOf(excNode)).getOrElse("") +
       causeNodeOption.map(causeNode => " from " + codeOf(causeNode)).getOrElse("")
 
-    val callNode = nodeBuilder.callNode(code, "<operator>.raise", DispatchTypes.STATIC_DISPATCH, lineAndColOf(raise))
+    val callNode =
+      nodeBuilder.callNode(code, "<operator>.raise", "<operator>.raise", DispatchTypes.STATIC_DISPATCH, lineAndColOf(raise))
 
     addAstChildrenAsArguments(callNode, 1, args)
 
@@ -1310,7 +1280,8 @@ class PythonAstVisitor(
     val msgNode  = assert.msg.map(convert)
 
     val code     = "assert " + codeOf(testNode) + msgNode.map(m => ", " + codeOf(m)).getOrElse("")
-    val callNode = nodeBuilder.callNode(code, "<operator>.assert", DispatchTypes.STATIC_DISPATCH, lineAndColOf(assert))
+    val callNode =
+      nodeBuilder.callNode(code, "<operator>.assert", "<operator>.assert", DispatchTypes.STATIC_DISPATCH, lineAndColOf(assert))
 
     addAstChildrenAsArguments(callNode, 1, testNode)
     if (msgNode.isDefined) {
@@ -1329,6 +1300,13 @@ class PythonAstVisitor(
   //     y = import("", "y")
   //   }
   def convert(importStmt: ast.Import): NewNode = {
+    importStmt.names.foreach { alias =>
+      val localName = alias.asName.getOrElse(alias.name.split('.').headOption.getOrElse(alias.name))
+      val targetFullName =
+        if (alias.asName.isDefined) alias.name
+        else alias.name.split('.').headOption.getOrElse(alias.name)
+      scope.addImport(localName, targetFullName)
+    }
     createTransformedImport("", importStmt.names, lineAndColOf(importStmt), importStmt)
   }
 
@@ -1349,6 +1327,11 @@ class PythonAstVisitor(
     }
     moduleName += importFrom.module.getOrElse("")
 
+    importFrom.names.foreach { alias =>
+      val localName      = alias.asName.getOrElse(alias.name)
+      val targetFullName = if (moduleName.nonEmpty) s"$moduleName.${alias.name}" else alias.name
+      scope.addImport(localName, targetFullName)
+    }
     createTransformedImport(moduleName, importFrom.names, lineAndColOf(importFrom), importFrom)
   }
 
@@ -1369,7 +1352,7 @@ class PythonAstVisitor(
   }
 
   def convert(pass: ast.Pass): nodes.NewNode = {
-    nodeBuilder.callNode("pass", "<operator>.pass", DispatchTypes.STATIC_DISPATCH, lineAndColOf(pass))
+    nodeBuilder.callNode("pass", "<operator>.pass", "<operator>.pass", DispatchTypes.STATIC_DISPATCH, lineAndColOf(pass))
   }
 
   def convert(astBreak: ast.Break): nodes.NewNode = {
@@ -1489,7 +1472,7 @@ class PythonAstVisitor(
       }
 
     val code     = operatorCode + codeOf(operandNode)
-    val callNode = nodeBuilder.callNode(code, methodFullName, DispatchTypes.STATIC_DISPATCH, lineAndColOf(unaryOp))
+    val callNode = nodeBuilder.callNode(code, methodFullName, methodFullName, DispatchTypes.STATIC_DISPATCH, lineAndColOf(unaryOp))
 
     addAstChildrenAsArguments(callNode, 1, operandNode)
 
@@ -1523,7 +1506,8 @@ class PythonAstVisitor(
     val orElseNode = convert(ifExp.orelse)
 
     val code     = codeOf(bodyNode) + " if " + codeOf(testNode) + " else " + codeOf(orElseNode)
-    val callNode = nodeBuilder.callNode(code, Operators.conditional, DispatchTypes.STATIC_DISPATCH, lineAndColOf(ifExp))
+    val callNode =
+      nodeBuilder.callNode(code, Operators.conditional, Operators.conditional, DispatchTypes.STATIC_DISPATCH, lineAndColOf(ifExp))
 
     // testNode is first argument to match semantics of Operators.conditional.
     addAstChildrenAsArguments(callNode, 1, testNode, bodyNode, orElseNode)
@@ -1536,50 +1520,34 @@ class PythonAstVisitor(
   // TODO test
   def convert(dict: ast.Dict): NewNode = {
     val MAX_KV_PAIRS    = 1000
-    val tmpVariableName = getUnusedName()
-    val dictOperatorCall =
-      createLiteralOperatorCall("{", "}", "<operator>.dictLiteral", lineAndColOf(dict))
-    val dictVariableAssigNode =
-      createAssignmentToIdentifier(tmpVariableName, dictOperatorCall, lineAndColOf(dict))
+    val lineAndColumn = lineAndColOf(dict)
 
-    val dictElementAssignNodes = if (dict.keys.size > MAX_KV_PAIRS) {
-      Seq(
-        nodeBuilder
-          .callNode("<too-many-key-value-pairs>", Constants.ANY, DispatchTypes.STATIC_DISPATCH, lineAndColOf(dict))
-      )
+    if (dict.keys.size > MAX_KV_PAIRS) {
+      nodeBuilder.callNode("<too-many-key-value-pairs>", Constants.ANY, Constants.ANY, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
     } else {
-      dict.keys.zip(dict.values).map { case (key, value) =>
-        key match {
-          case Some(key) =>
-            val indexAccessNode = createIndexAccess(
-              createIdentifierNode(tmpVariableName, Load, lineAndColOf(dict)),
-              convert(key),
-              lineAndColOf(dict)
-            )
+      val hasUnpack = dict.keys.exists(_.isEmpty)
+      val opFullName = if (hasUnpack) PythonOperators.dictLiteralWithUnpack else "<operator>.dictLiteral"
+      val code       = new AstPrinter("").print(dict)
+      val callNode   = nodeBuilder.callNode(code, opFullName, opFullName, DispatchTypes.STATIC_DISPATCH, lineAndColumn)
 
-            createAssignment(indexAccessNode, convert(value), lineAndColOf(dict))
+      val args = mutable.ArrayBuffer.empty[nodes.NewNode]
+      dict.keys.zip(dict.values).foreach { case (keyOpt, value) =>
+        keyOpt match {
+          case Some(key) =>
+            args.append(convert(key))
+            args.append(convert(value))
           case None =>
-            createXDotYCall(
-              () => createIdentifierNode(tmpVariableName, Load, lineAndColOf(dict)),
-              "update",
-              xMayHaveSideEffects = false,
-              lineAndColOf(dict),
-              convert(value) :: Nil,
-              Nil,
-              None
-            )
+            val v = convert(value)
+            val unpackCode = "**" + codeOf(v)
+            val unpackNode =
+              nodeBuilder.callNode(unpackCode, "<operator>.dictUnpack", "<operator>.dictUnpack", DispatchTypes.STATIC_DISPATCH, lineAndColumn)
+            addAstChildrenAsArguments(unpackNode, 1, v)
+            args.append(unpackNode)
         }
       }
+      addAstChildrenAsArguments(callNode, 1, args)
+      callNode
     }
-
-    val dictInstanceReturnIdentifierNode =
-      createIdentifierNode(tmpVariableName, Load, lineAndColOf(dict))
-
-    val blockElements = mutable.ArrayBuffer.empty[nodes.NewNode]
-    blockElements.append(dictVariableAssigNode)
-    blockElements.appendAll(dictElementAssignNodes)
-    blockElements.append(dictInstanceReturnIdentifierNode)
-    createBlock(blockElements, lineAndColOf(dict))
   }
 
   // TODO test
@@ -1587,7 +1555,8 @@ class PythonAstVisitor(
     val setElementNodes = set.elts.map(convert)
     val code            = setElementNodes.map(codeOf).mkString("{", ", ", "}")
 
-    val callNode = nodeBuilder.callNode(code, "<operator>.setLiteral", DispatchTypes.STATIC_DISPATCH, lineAndColOf(set))
+    val callNode =
+      nodeBuilder.callNode(code, "<operator>.setLiteral", "<operator>.setLiteral", DispatchTypes.STATIC_DISPATCH, lineAndColOf(set))
 
     addAstChildrenAsArguments(callNode, 1, setElementNodes)
 
@@ -1599,36 +1568,37 @@ class PythonAstVisitor(
   // TODO test
   def convert(listComp: ast.ListComp): NewNode = {
     contextStack.pushSpecialContext()
-    val tmpVariableName = getUnusedName()
+    val lineAndColumn = lineAndColOf(listComp)
+    val specialTargetLocals = mutable.ArrayBuffer.empty[nodes.NewLocal]
 
-    // Create tmp = list()
-    val listOperatorCall =
-      createLiteralOperatorCall("[", "]", "<operator>.listLiteral", lineAndColOf(listComp))
-    val variableAssignNode =
-      createAssignmentToIdentifier(tmpVariableName, listOperatorCall, lineAndColOf(listComp))
+    listComp.generators.foreach { comprehension =>
+      extractComprehensionSpecialVariableNames(comprehension.target).foreach { name =>
+        val localNode = nodeBuilder.localNode(name.id, None)
+        specialTargetLocals.append(localNode)
+        contextStack.addSpecialVariable(localNode)
+      }
+    }
 
-    // Create tmp.append(x)
-    val listVarAppendCallNode = createXDotYCall(
-      () => createIdentifierNode(tmpVariableName, Load, lineAndColOf(listComp)),
-      "append",
-      xMayHaveSideEffects = false,
-      lineAndColOf(listComp),
-      convert(listComp.elt) :: Nil,
-      Nil,
-      None
-    )
+    val args = mutable.ArrayBuffer.empty[nodes.NewNode]
+    args.append(convert(listComp.elt))
+    listComp.generators.foreach { comprehension =>
+      args.append(convert(comprehension.iter))
+      comprehension.ifs.foreach(ifExpr => args.append(convert(ifExpr)))
+    }
 
-    val comprehensionBlockNode = createComprehensionLowering(
-      tmpVariableName,
-      variableAssignNode,
-      listVarAppendCallNode,
-      listComp.generators,
-      lineAndColOf(listComp)
-    )
+    val code = new AstPrinter("").print(listComp)
+    val callNode =
+      nodeBuilder.callNode(
+        code,
+        "listComprehension",
+        PythonOperators.listComprehension,
+        DispatchTypes.STATIC_DISPATCH,
+        lineAndColumn
+      )
+    addAstChildrenAsArguments(callNode, 1, args)
 
     contextStack.pop()
-
-    comprehensionBlockNode
+    if (specialTargetLocals.nonEmpty) createBlock(specialTargetLocals.toList.appended(callNode), lineAndColumn) else callNode
   }
 
   /** Lowering of {x for y in l for x in y}: { tmp = {} <loweringOf>( for y in l: for x in y: tmp.add(x) ) tmp }
@@ -1636,35 +1606,37 @@ class PythonAstVisitor(
   // TODO test
   def convert(setComp: ast.SetComp): NewNode = {
     contextStack.pushSpecialContext()
-    val tmpVariableName = getUnusedName()
+    val lineAndColumn = lineAndColOf(setComp)
+    val specialTargetLocals = mutable.ArrayBuffer.empty[nodes.NewLocal]
 
-    val setOperatorCall =
-      createLiteralOperatorCall("{", "}", "<operator>.setLiteral", lineAndColOf(setComp))
-    val variableAssignNode =
-      createAssignmentToIdentifier(tmpVariableName, setOperatorCall, lineAndColOf(setComp))
+    setComp.generators.foreach { comprehension =>
+      extractComprehensionSpecialVariableNames(comprehension.target).foreach { name =>
+        val localNode = nodeBuilder.localNode(name.id, None)
+        specialTargetLocals.append(localNode)
+        contextStack.addSpecialVariable(localNode)
+      }
+    }
 
-    // Create tmp.add(x)
-    val setVarAddCallNode = createXDotYCall(
-      () => createIdentifierNode(tmpVariableName, Load, lineAndColOf(setComp)),
-      "add",
-      xMayHaveSideEffects = false,
-      lineAndColOf(setComp),
-      convert(setComp.elt) :: Nil,
-      Nil,
-      None
-    )
+    val args = mutable.ArrayBuffer.empty[nodes.NewNode]
+    args.append(convert(setComp.elt))
+    setComp.generators.foreach { comprehension =>
+      args.append(convert(comprehension.iter))
+      comprehension.ifs.foreach(ifExpr => args.append(convert(ifExpr)))
+    }
 
-    val comprehensionBlockNode = createComprehensionLowering(
-      tmpVariableName,
-      variableAssignNode,
-      setVarAddCallNode,
-      setComp.generators,
-      lineAndColOf(setComp)
-    )
+    val code = new AstPrinter("").print(setComp)
+    val callNode =
+      nodeBuilder.callNode(
+        code,
+        "setComprehension",
+        PythonOperators.setComprehension,
+        DispatchTypes.STATIC_DISPATCH,
+        lineAndColumn
+      )
+    addAstChildrenAsArguments(callNode, 1, args)
 
     contextStack.pop()
-
-    comprehensionBlockNode
+    if (specialTargetLocals.nonEmpty) createBlock(specialTargetLocals.toList.appended(callNode), lineAndColumn) else callNode
   }
 
   /** Lowering of {k:v for y in l for k, v in y}: { tmp = {} <loweringOf>( for y in l: for k, v in y: tmp[k] = v ) tmp }
@@ -1672,35 +1644,38 @@ class PythonAstVisitor(
   // TODO test
   def convert(dictComp: ast.DictComp): NewNode = {
     contextStack.pushSpecialContext()
-    val tmpVariableName = getUnusedName()
+    val lineAndColumn = lineAndColOf(dictComp)
+    val specialTargetLocals = mutable.ArrayBuffer.empty[nodes.NewLocal]
 
-    val dictOperatorCall =
-      createLiteralOperatorCall("{", "}", "<operator>.dictLiteral", lineAndColOf(dictComp))
-    val variableAssignNode =
-      createAssignmentToIdentifier(tmpVariableName, dictOperatorCall, lineAndColOf(dictComp))
+    dictComp.generators.foreach { comprehension =>
+      extractComprehensionSpecialVariableNames(comprehension.target).foreach { name =>
+        val localNode = nodeBuilder.localNode(name.id, None)
+        specialTargetLocals.append(localNode)
+        contextStack.addSpecialVariable(localNode)
+      }
+    }
 
-    // Create tmp[k] = v
-    val dictAssigNode = createAssignment(
-      createIndexAccess(
-        createIdentifierNode(tmpVariableName, Load, lineAndColOf(dictComp)),
-        convert(dictComp.key),
-        lineAndColOf(dictComp)
-      ),
-      convert(dictComp.value),
-      lineAndColOf(dictComp)
-    )
+    val args = mutable.ArrayBuffer.empty[nodes.NewNode]
+    args.append(convert(dictComp.key))
+    args.append(convert(dictComp.value))
+    dictComp.generators.foreach { comprehension =>
+      args.append(convert(comprehension.iter))
+      comprehension.ifs.foreach(ifExpr => args.append(convert(ifExpr)))
+    }
 
-    val comprehensionBlockNode = createComprehensionLowering(
-      tmpVariableName,
-      variableAssignNode,
-      dictAssigNode,
-      dictComp.generators,
-      lineAndColOf(dictComp)
-    )
+    val code = new AstPrinter("").print(dictComp)
+    val callNode =
+      nodeBuilder.callNode(
+        code,
+        "dictComprehension",
+        PythonOperators.dictComprehension,
+        DispatchTypes.STATIC_DISPATCH,
+        lineAndColumn
+      )
+    addAstChildrenAsArguments(callNode, 1, args)
 
     contextStack.pop()
-
-    comprehensionBlockNode
+    if (specialTargetLocals.nonEmpty) createBlock(specialTargetLocals.toList.appended(callNode), lineAndColumn) else callNode
   }
 
   /** Lowering of (x for y in l for x in y): { tmp = <operator>.genExp <loweringOf>( for y in l: for x in y:
@@ -1710,42 +1685,37 @@ class PythonAstVisitor(
   // TODO test
   def convert(generatorExp: ast.GeneratorExp): NewNode = {
     contextStack.pushSpecialContext()
-    val tmpVariableName = getUnusedName()
+    val lineAndColumn = lineAndColOf(generatorExp)
+    val specialTargetLocals = mutable.ArrayBuffer.empty[nodes.NewLocal]
 
-    // Create tmp = list()
-    val genExpOperatorCall =
+    generatorExp.generators.foreach { comprehension =>
+      extractComprehensionSpecialVariableNames(comprehension.target).foreach { name =>
+        val localNode = nodeBuilder.localNode(name.id, None)
+        specialTargetLocals.append(localNode)
+        contextStack.addSpecialVariable(localNode)
+      }
+    }
+
+    val args = mutable.ArrayBuffer.empty[nodes.NewNode]
+    args.append(convert(generatorExp.elt))
+    generatorExp.generators.foreach { comprehension =>
+      args.append(convert(comprehension.iter))
+      comprehension.ifs.foreach(ifExpr => args.append(convert(ifExpr)))
+    }
+
+    val code = new AstPrinter("").print(generatorExp)
+    val callNode =
       nodeBuilder.callNode(
-        "<operator>.genExp",
-        "<operator>.genExp",
+        code,
+        "genComprehension",
+        PythonOperators.genComprehension,
         DispatchTypes.STATIC_DISPATCH,
-        lineAndColOf(generatorExp)
+        lineAndColumn
       )
-
-    val variableAssignNode =
-      createAssignmentToIdentifier(tmpVariableName, genExpOperatorCall, lineAndColOf(generatorExp))
-
-    // Create tmp.append(x)
-    val genExpAppendCallNode = createXDotYCall(
-      () => createIdentifierNode(tmpVariableName, Load, lineAndColOf(generatorExp)),
-      "append",
-      xMayHaveSideEffects = false,
-      lineAndColOf(generatorExp),
-      convert(generatorExp.elt) :: Nil,
-      Nil,
-      None
-    )
-
-    val comprehensionBlockNode = createComprehensionLowering(
-      tmpVariableName,
-      variableAssignNode,
-      genExpAppendCallNode,
-      generatorExp.generators,
-      lineAndColOf(generatorExp)
-    )
+    addAstChildrenAsArguments(callNode, 1, args)
 
     contextStack.pop()
-
-    comprehensionBlockNode
+    if (specialTargetLocals.nonEmpty) createBlock(specialTargetLocals.toList.appended(callNode), lineAndColumn) else callNode
   }
 
   def convert(await: ast.Await): NewNode = {
@@ -1813,30 +1783,26 @@ class PythonAstVisitor(
     comparators: Iterable[ast.iexpr],
     lineAndColumn: LineAndColumn
   ): Iterable[nodes.NewNode] = {
-    val rhsNode = convert(comparators.head)
-
     if (compOperators.size == 1) {
+      val rhsNode = convert(comparators.head)
       val compareNode =
         createBinaryOperatorCall(lhsNode, compopToOpCodeAndFullName(compOperators.head), rhsNode, lineAndColumn)
       Iterable.single(compareNode)
     } else {
-      val tmpVariableName = getUnusedName()
-      val assignmentNode  = createAssignmentToIdentifier(tmpVariableName, rhsNode, lineAndColumn)
-
-      val tmpIdentifierCompare1 = createIdentifierNode(tmpVariableName, Load, lineAndColumn)
+      val rhsForCompare = convert(comparators.head)
       val compareNode = createBinaryOperatorCall(
         lhsNode,
         compopToOpCodeAndFullName(compOperators.head),
-        tmpIdentifierCompare1,
+        rhsForCompare,
         lineAndColumn
       )
 
-      val tmpIdentifierCompare2 = createIdentifierNode(tmpVariableName, Load, lineAndColumn)
-      val childNodes = lowerComparatorChain(tmpIdentifierCompare2, compOperators.tail, comparators.tail, lineAndColumn)
+      val rhsForRec = convert(comparators.head)
+      val childNodes = lowerComparatorChain(rhsForRec, compOperators.tail, comparators.tail, lineAndColumn)
 
       val blockNode = createBlock(childNodes, lineAndColumn)
 
-      Iterable(assignmentNode, createBinaryOperatorCall(compareNode, andOpCodeAndFullName(), blockNode, lineAndColumn))
+      Iterable(createBinaryOperatorCall(compareNode, andOpCodeAndFullName(), blockNode, lineAndColumn))
     }
   }
 
@@ -1908,6 +1874,7 @@ class PythonAstVisitor(
     val callNode = nodeBuilder.callNode(
       code,
       "<operator>.formattedValue",
+      "<operator>.formattedValue",
       DispatchTypes.STATIC_DISPATCH,
       lineAndColOf(formattedValue)
     )
@@ -1925,7 +1892,7 @@ class PythonAstVisitor(
       .mkString("") + joinedString.quote
 
     val callNode =
-      nodeBuilder.callNode(code, "<operator>.formatString", DispatchTypes.STATIC_DISPATCH, lineAndColOf(joinedString))
+      nodeBuilder.callNode(code, "<operator>.formatString", "<operator>.formatString", DispatchTypes.STATIC_DISPATCH, lineAndColOf(joinedString))
 
     addAstChildrenAsArguments(callNode, 1, argumentNodes)
 
@@ -2005,7 +1972,7 @@ class PythonAstVisitor(
 
         val code = nodeToCode.getCode(subscript)
         val callNode =
-          nodeBuilder.callNode(code, "<operator>.slice", DispatchTypes.STATIC_DISPATCH, lineAndColOf(slice))
+          nodeBuilder.callNode(code, "<operator>.slice", "<operator>.slice", DispatchTypes.STATIC_DISPATCH, lineAndColOf(slice))
 
         val args = value :: lower :: upper :: step :: Nil
         addAstChildrenAsArguments(callNode, 1, args)
@@ -2049,7 +2016,7 @@ class PythonAstVisitor(
     val code             = listElementNodes.map(codeOf).mkString("[", ", ", "]")
 
     val callNode =
-      nodeBuilder.callNode(code, "<operator>.listLiteral", DispatchTypes.STATIC_DISPATCH, lineAndColOf(list))
+      nodeBuilder.callNode(code, "<operator>.listLiteral", "<operator>.listLiteral", DispatchTypes.STATIC_DISPATCH, lineAndColOf(list))
 
     addAstChildrenAsArguments(callNode, 1, listElementNodes)
 
@@ -2068,7 +2035,7 @@ class PythonAstVisitor(
       else "(" + codeOf(tupleElementNodes.head) + ",)"
 
     val callNode =
-      nodeBuilder.callNode(code, "<operator>.tupleLiteral", DispatchTypes.STATIC_DISPATCH, lineAndColOf(tuple))
+      nodeBuilder.callNode(code, "<operator>.tupleLiteral", "<operator>.tupleLiteral", DispatchTypes.STATIC_DISPATCH, lineAndColOf(tuple))
 
     addAstChildrenAsArguments(callNode, 1, tupleElementNodes)
 
@@ -2082,7 +2049,7 @@ class PythonAstVisitor(
     slice.step.foreach(expr => args.append(convert(expr)))
 
     val code     = nodeToCode.getCode(slice)
-    val callNode = nodeBuilder.callNode(code, "<operator>.slice", DispatchTypes.STATIC_DISPATCH, lineAndColOf(slice))
+    val callNode = nodeBuilder.callNode(code, "<operator>.slice", "<operator>.slice", DispatchTypes.STATIC_DISPATCH, lineAndColOf(slice))
 
     addAstChildrenAsArguments(callNode, 1, args)
 
@@ -2095,6 +2062,7 @@ class PythonAstVisitor(
 
     val callNode = nodeBuilder.callNode(
       code,
+      "<operator>.stringExpressionList",
       "<operator>.stringExpressionList",
       DispatchTypes.STATIC_DISPATCH,
       lineAndColOf(stringExpList)
@@ -2177,9 +2145,17 @@ class PythonAstVisitor(
 
   def convert(typeIgnore: ast.TypeIgnore): NewNode = ???
 
-  private def calculateFullNameFromContext(name: String): String = {
-    val contextQualName = contextStack.qualName
-    if (contextQualName != "") relFileName + ":" + contextQualName + "." + name else relFileName + ":" + name
+  private def qualPartsForFullName: List[String] = {
+    val raw = contextStack.qualName
+    if (raw.isEmpty) Nil
+    else {
+      raw.split('.').toList.filterNot(_ == Constants.moduleName).filter(_.nonEmpty)
+    }
+  }
+
+  private def fullNameOfDecl(name: String): String = {
+    val prefix = (scope.moduleFullName :: qualPartsForFullName).filter(_.nonEmpty)
+    (prefix :+ name).mkString(".")
   }
 
   override protected def line(node: iast): Option[Int]         = None

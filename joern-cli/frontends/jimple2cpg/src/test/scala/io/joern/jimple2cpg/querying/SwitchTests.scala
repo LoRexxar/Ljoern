@@ -80,7 +80,7 @@ class SwitchTests extends JimpleCode2CpgFixture {
       .filter(_.code == "lookupswitch($stack5)")
       .condition
       .code
-      .toSetMutable shouldBe Set("$stack5")
+      .toSetMutable shouldBe Set("l3.hashCode()")
   }
 
 }

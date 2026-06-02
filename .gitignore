@@ -13,6 +13,7 @@ joern-cli.zip
 joern-server.zip
 cpg.bin.zip
 cpg.bin
+*.cpg
 ast-for-funcs.json
 cfg-for-funcs.json
 pdg-for-funcs.json
@@ -22,6 +23,15 @@ null
 /gnupg-*
 /joern-cli/${sys:LOG_DIR}/
 .local
+.jdk/
+.home/
+.tmp/
+.coursier-cache/
+*.log
+hs_err_pid*.log
+.env
+.env.*
+!.env.example
 **/astgen-win.exe
 **/astgen-macos
 **/astgen-macos-arm
@@ -89,7 +99,11 @@ flake.lock
 .bloop
 **/.DS_Store
 **/.bsp
+.trae/
+.tools/
 
 
 /joern-cli/frontends/c2cpg/eclipse-cdt/build/
 /joern-cli/frontends/c2cpg/eclipse-cdt/org.eclipse.cdt.core-*.jar
+
+/docs/

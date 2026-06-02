@@ -20,7 +20,7 @@ class MethodCpgTests extends PySrc2CpgFixture with Matchers {
 
     "test method full name" in {
       val method = cpg.method.name("method").head
-      method.fullName shouldBe s"$path:<module>.method"
+      method.fullName shouldBe "a.b.method"
     }
   }
 
@@ -40,17 +40,17 @@ class MethodCpgTests extends PySrc2CpgFixture with Matchers {
     )
 
     cpg.method.name("method").map(m => (m.name, m.fullName)).l should contain theSameElementsAs (List(
-      ("method", s"$path:<module>.Foo.method"),
-      ("method", s"$path:<module>.Foo.method$$redefinition1"),
-      ("method", s"$path:<module>.Foo.method$$redefinition2")
+      ("method", "a.b.Foo.method"),
+      ("method", "a.b.Foo.method$redefinition1"),
+      ("method", "a.b.Foo.method$redefinition2")
     ))
 
     cpg.typeDecl.name("Foo").member.name("method").dynamicTypeHintFullName.l should contain theSameElementsAs (
-      List(s"$path:<module>.Foo.method$$redefinition2")
+      List("a.b.Foo.method$redefinition2")
     )
 
     cpg.typeDecl.name("Foo<meta>").member.name("method").dynamicTypeHintFullName.l should contain theSameElementsAs (
-      List(s"$path:<module>.Foo.method<metaClassAdapter>")
+      List("a.b.Foo.method<metaClassAdapter>")
     )
   }
 

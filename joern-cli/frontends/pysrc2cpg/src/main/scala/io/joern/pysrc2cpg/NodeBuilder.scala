@@ -15,12 +15,18 @@ class NodeBuilder(diffGraph: DiffGraphBuilder) {
     node
   }
 
-  def callNode(code: String, name: String, dispatchType: String, lineAndColumn: LineAndColumn): nodes.NewCall = {
+  def callNode(
+    code: String,
+    name: String,
+    methodFullName: String,
+    dispatchType: String,
+    lineAndColumn: LineAndColumn
+  ): nodes.NewCall = {
     val callNode = nodes
       .NewCall()
       .code(code)
       .name(name)
-      .methodFullName(if (dispatchType == DispatchTypes.STATIC_DISPATCH) name else Defines.DynamicCallUnknownFullName)
+      .methodFullName(methodFullName)
       .dispatchType(dispatchType)
       .typeFullName(Constants.ANY)
       .lineNumber(lineAndColumn.line)
@@ -36,7 +42,7 @@ class NodeBuilder(diffGraph: DiffGraphBuilder) {
       .name(name)
       .fullName(fullName)
       .typeDeclFullName(fullName)
-    addNodeToDiff(typeNode)
+    typeNode
   }
 
   def typeDeclNode(
@@ -109,6 +115,8 @@ class NodeBuilder(diffGraph: DiffGraphBuilder) {
       .NewMethod()
       .name(name)
       .fullName(fullName)
+      .code(s"def $name(...)")
+      .signature("")
       .filename(fileName)
       .isExternal(false)
       .lineNumber(lineAndColumn.line)
@@ -198,7 +206,7 @@ class NodeBuilder(diffGraph: DiffGraphBuilder) {
       .lineNumber(lineAndColumn.line)
       .columnNumber(lineAndColumn.column)
       .code("RET")
-      .evaluationStrategy(EvaluationStrategies.BY_SHARING)
+      .evaluationStrategy(EvaluationStrategies.BY_VALUE)
       .offset(lineAndColumn.offset)
       .offsetEnd(lineAndColumn.endOffset)
 

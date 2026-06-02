@@ -46,8 +46,7 @@ class ReturnCpgTests extends PySrc2CpgFixture with Matchers {
     }
 
     "test return node ast children" in {
-      cpg.ret.astChildren.order(1).head.code shouldBe
-        "tmp0 = {}\ntmp0[a] = 1\ntmp0"
+      cpg.ret.astChildren.order(1).head.code shouldBe "{a:1}"
     }
   }
 

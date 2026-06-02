@@ -59,10 +59,10 @@ class DynamicCallGraphTests extends JimpleCode2CpgFixture {
 
     "account for print calls from all subclasses due to using CHA" in {
       cpg.call.name("print").callee.definingTypeDecl.fullName.toSetMutable shouldBe Set(
-        "Foo$D",
-        "Foo$B",
-        "Foo$C",
-        "Foo$A"
+        "Foo.D",
+        "Foo.B",
+        "Foo.C",
+        "Foo.A"
       )
     }
   }

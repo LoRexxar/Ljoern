@@ -19,6 +19,7 @@ import io.joern.x2cpg.SourceFiles
 import io.shiftleft.semanticcpg.utils.FileUtil.*
 import io.joern.x2cpg.passes.frontend.XTypeRecoveryConfig
 import io.joern.x2cpg.utils.dependency.DependencyResolver
+import io.joern.x2cpg.utils.FrontendProfiling
 import io.shiftleft.codepropertygraph.generated.Cpg
 import io.shiftleft.passes.ForkJoinParallelCpgPassWithAccumulator
 import io.shiftleft.semanticcpg.utils.FileUtil
@@ -98,9 +99,12 @@ class AstCreationPass(config: Config, cpg: Cpg, sourcesOverride: Option[List[Str
   def closeTypeSolvers(): Unit = combinedTypeSolver.close()
 
   private def initParserAndUtils(config: Config): (SourceParser, JavaSymbolSolver, SimpleCombinedTypeSolver) = {
-    val dependencies                   = getDependencyList(config.inputPath)
-    val sourceParser                   = SourceParser(config, sourcesOverride)
-    val (symbolSolver, combinedSolver) = createSymbolSolver(config, dependencies, sourceParser)
+    val dependencies = FrontendProfiling.time("deps.resolve") { getDependencyList(config.inputPath) }
+    FrontendProfiling.metric("deps.jars", dependencies.size.toLong)
+    val sourceParser = FrontendProfiling.time("sourceParser.init") { SourceParser(config, sourcesOverride) }
+    FrontendProfiling.metric("source.allowlistPrefixes", sourceParser.allowedPackagePrefixes.size.toLong)
+    val (symbolSolver, combinedSolver) =
+      FrontendProfiling.time("typeSolver.init") { createSymbolSolver(config, dependencies, sourceParser) }
     (sourceParser, symbolSolver, combinedSolver)
   }
 
@@ -146,6 +150,7 @@ class AstCreationPass(config: Config, cpg: Cpg, sourcesOverride: Option[List[Str
     }
     val combinedTypeSolver = new SimpleCombinedTypeSolver(enableVerboseTypeLogging)
     val symbolSolver       = new JavaSymbolSolver(combinedTypeSolver)
+    val allowedPackagePrefixes = sourceParser.allowedPackagePrefixes
 
     val jdkPathFromEnvVar = Option(System.getenv(JavaSrcEnvVar.JdkPath.name))
     val jdkPath = (config.jdkPath, jdkPathFromEnvVar) match {
@@ -166,11 +171,19 @@ class AstCreationPass(config: Config, cpg: Cpg, sourcesOverride: Option[List[Str
     }
 
     combinedTypeSolver.addNonCachingTypeSolver(
-      JarTypeSolver.fromPath(jdkPath, config.cacheJdkTypeSolver, enableVerboseTypeLogging)
+      FrontendProfiling.time("typeSolver.jdk") {
+        JarTypeSolver.fromPath(
+          jdkPath,
+          config.cacheJdkTypeSolver,
+          enableVerboseTypeLogging,
+          indexAllowlistPrefixes = allowedPackagePrefixes.toSeq
+        )
+      }
     )
 
-    val sourceTypeSolver =
+    val sourceTypeSolver = FrontendProfiling.time("typeSolver.source") {
       EagerSourceTypeSolver(sourceParser, combinedTypeSolver, symbolSolver, enableVerboseTypeLogging)
+    }
 
     combinedTypeSolver.addCachingTypeSolver(sourceTypeSolver)
 
@@ -185,7 +198,16 @@ class AstCreationPass(config: Config, cpg: Cpg, sourcesOverride: Option[List[Str
     }
     (jarsList ++ dependencies)
       .foreach { path =>
-        Try(JarTypeSolver.fromPath(path, useCache = true, enableVerboseTypeLogging = enableVerboseTypeLogging)) match {
+        Try(
+          FrontendProfiling.time("typeSolver.inferenceJar.single") {
+            JarTypeSolver.fromPath(
+              path,
+              useCache = true,
+              enableVerboseTypeLogging = enableVerboseTypeLogging,
+              indexAllowlistPrefixes = Seq.empty
+            )
+          }
+        ) match {
           case Success(jarTypeSolver) =>
             combinedTypeSolver.addNonCachingTypeSolver(jarTypeSolver)
             if (enableVerboseTypeLogging) {

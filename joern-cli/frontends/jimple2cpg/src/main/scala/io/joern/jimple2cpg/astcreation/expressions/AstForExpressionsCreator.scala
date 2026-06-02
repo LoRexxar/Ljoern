@@ -2,6 +2,7 @@ package io.joern.jimple2cpg.astcreation.expressions
 
 import io.joern.jimple2cpg.astcreation.AstCreator
 import io.joern.x2cpg.{Ast, ValidationMode}
+import io.joern.x2cpg.utils.CanonicalName
 import io.shiftleft.codepropertygraph.generated.nodes.{NewCall, NewIdentifier, NewTypeRef}
 import io.shiftleft.codepropertygraph.generated.{DispatchTypes, Operators}
 import org.slf4j.LoggerFactory
@@ -76,8 +77,10 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
     }
 
     val signature =
-      s"${registerType(callee.getReturnType.toQuotedString)}(${(for (i <- 0 until callee.getParameterTypes.size())
-          yield registerType(callee.getParameterType(i).toQuotedString)).mkString(",")})"
+      CanonicalName.normalizeSignature(
+        s"${registerType(CanonicalName.normalizeTypeFullName(callee.getReturnType.toQuotedString))}(${(for (i <- 0 until callee.getParameterTypes.size())
+            yield registerType(CanonicalName.normalizeTypeFullName(callee.getParameterType(i).toQuotedString))).mkString(",")})"
+      )
     val thisAsts = invokeExpr match {
       case expr: InstanceInvokeExpr => astsForValue(expr.getBase, parentUnit)
       case _                        => Seq(createThisNode(callee, NewIdentifier()))
@@ -89,7 +92,8 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
       else
         callee.getName
 
-    val calleeType = registerType(callee.getDeclaringClass.getType.toQuotedString)
+    val calleeType =
+      registerType(CanonicalName.normalizeTypeFullName(callee.getDeclaringClass.getType.toQuotedString))
     val callType =
       if (callee.isConstructor) "void"
       else calleeType
@@ -104,9 +108,9 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
       .name(callee.getName)
       .code(code)
       .dispatchType(dispatchType)
-      .methodFullName(s"$calleeType.${callee.getName}:$signature")
+      .methodFullName(CanonicalName.normalizeMethodFullName(s"$calleeType.${callee.getName}:$signature"))
       .signature(signature)
-      .typeFullName(callType)
+      .typeFullName(CanonicalName.normalizeTypeFullName(callType))
       .lineNumber(line(parentUnit))
       .columnNumber(column(parentUnit))
 
@@ -134,7 +138,7 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
       case u: NewMultiArrayExpr =>
         astForArrayCreateExpr(x, u.getSizes.asScala, parentUnit)
       case _ =>
-        val parentType = registerType(x.getType.toQuotedString)
+        val parentType = registerType(CanonicalName.normalizeTypeFullName(x.getType.toQuotedString))
         Ast(
           NewCall()
             .name(Operators.alloc)
@@ -151,7 +155,7 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
   private def astForArrayCreateExpr(arrayInitExpr: Expr, sizes: Iterable[Value], parentUnit: soot.Unit): Ast = {
     // Jimple does not have Operators.arrayInitializer
     // to enforce 3 address code form
-    val arrayBaseType = registerType(arrayInitExpr.getType.toQuotedString)
+    val arrayBaseType = registerType(CanonicalName.normalizeTypeFullName(arrayInitExpr.getType.toQuotedString))
     val code = s"new ${arrayBaseType.substring(0, arrayBaseType.indexOf('['))}${sizes.map(s => s"[$s]").mkString}"
     val callBlock = NewCall()
       .name(Operators.alloc)
@@ -172,7 +176,7 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
       .methodFullName(methodName)
       .code(unaryExpr.toString())
       .dispatchType(DispatchTypes.STATIC_DISPATCH)
-      .typeFullName(registerType(unaryExpr.getType.toQuotedString))
+      .typeFullName(registerType(CanonicalName.normalizeTypeFullName(unaryExpr.getType.toQuotedString)))
       .lineNumber(line(parentUnit))
       .columnNumber(column(parentUnit))
 
@@ -190,10 +194,10 @@ trait AstForExpressionsCreator(implicit withSchemaValidation: ValidationMode) { 
 
     val valueAsts = unaryExpr match {
       case instanceOfExpr: InstanceOfExpr =>
-        val t = registerType(instanceOfExpr.getCheckType.toQuotedString)
+        val t = registerType(CanonicalName.normalizeTypeFullName(instanceOfExpr.getCheckType.toQuotedString))
         astsForValue(op, parentUnit) ++ astForTypeRef(t)
       case castExpr: CastExpr =>
-        val t = registerType(castExpr.getCastType.toQuotedString)
+        val t = registerType(CanonicalName.normalizeTypeFullName(castExpr.getCastType.toQuotedString))
         astForTypeRef(t) ++ astsForValue(op, parentUnit)
       case _ => astsForValue(op, parentUnit)
     }

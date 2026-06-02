@@ -170,7 +170,7 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
 
   // LetStmt =
   //  Attr* 'super'? 'let' Pat (':' Type)?
-  //  '=' initializer:Expr
+  //  '=' initializer:Expr?
   //  LetElse?
   //  ';'
   private def visitLetStmt(letStmt: LetStmt): Seq[Ast] = {
@@ -179,7 +179,13 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
         identPat.name.identToken match {
           case Some(identToken) =>
             val typeFullName = letStmt.`type`.map(typeFullNameForType).getOrElse(typeFullNameForIdentPat(identPat))
-            lowerIdentifierDecl(identToken, letStmt.expr, typeFullName, code(letStmt))
+            letStmt.expr match {
+              case Some(rhsExpr) => lowerIdentifierDecl(identToken, rhsExpr, typeFullName, code(letStmt))
+              case None =>
+                val lhsName = code(identToken)
+                val local   = localNode(identToken, lhsName, lhsName, typeFullName)
+                Ast(local) :: Nil
+            }
           case None => notHandledYet(letStmt) :: Nil
         }
       case _ => notHandledYet(letStmt) :: Nil
@@ -512,9 +518,9 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
     val ifNode       = controlStructureNode(ifExpr, ControlStructureTypes.IF, code(ifExpr))
     val conditionAst = visitExpr(ifExpr.expr)
     val thenAst      = visitBlockExpr(ifExpr.thenBranch)
-    val elseAst      = ifExpr.elseBranch.map(visitElseBranch).getOrElse(Ast())
+    val elseAst      = ifExpr.elseBranch.map(visitElseBranch)
 
-    controlStructureAst(ifNode, Some(conditionAst), Seq(thenAst, elseAst))
+    ifThenElseAst(ifNode, Some(conditionAst), thenAst, elseAst)
   }
 
   private def visitElseBranch(elseBranch: IfExpr | BlockExpr): Ast = {
@@ -557,7 +563,7 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
     val conditionAst = visitExpr(whileExpr.expr)
     val bodyAst      = visitBlockExpr(whileExpr.blockExpr)
 
-    controlStructureAst(whileNode, Some(conditionAst), Seq(bodyAst))
+    whileBodyAst(whileNode, conditionAst, bodyAst)
   }
 
   // LoopExpr =
@@ -568,7 +574,7 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
     val conditionAst = Ast(literalNode(loopExpr.loopKwToken, "true", "bool"))
     val bodyAst      = visitBlockExpr(loopExpr.blockExpr)
 
-    controlStructureAst(loopNode, Some(conditionAst), Seq(bodyAst))
+    whileBodyAst(loopNode, conditionAst, bodyAst)
   }
 
   // ForExpr =
@@ -625,22 +631,11 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
   // FieldExpr =
   //  Attr* Expr '.' NameRef
   private def visitFieldExpr(fieldExpr: FieldExpr): Ast = {
-    val baseAst = visitExpr(fieldExpr.expr)
-    fieldExpr.nameRef.intNumberToken match {
-      case Some(indexNode) =>
-        // `x.0` becomes `x[0]`
-        // NB: this could change depending on how we lower `struct MyStruct(SomeType1, SomeType2, etc)`
-        val literalTypeFullName = typeFullNameForLiteralToken(indexNode)
-        val literalIndex        = literalNode(indexNode, code(indexNode), literalTypeFullName)
-        // TODO: typeFullName
-        val callNode = operatorCallNode(fieldExpr, code(fieldExpr), Operators.indexAccess, None)
-        callAst(callNode, Seq(baseAst, Ast(literalIndex)))
-      case None =>
-        // TODO: typeFullName
-        val nameRef   = fieldExpr.nameRef
-        val fieldName = code(nameRef)
-        fieldAccessAst(fieldExpr, nameRef, baseAst, code(fieldExpr), fieldName, Defines.Any)
-    }
+    val baseAst      = visitExpr(fieldExpr.expr)
+    val typeFullName = typeFullNameForExpr(fieldExpr)
+    val nameRef      = fieldExpr.nameRef
+    val fieldName    = code(nameRef)
+    fieldAccessAst(fieldExpr, nameRef, baseAst, code(fieldExpr), fieldName, typeFullName)
   }
 
   // MethodCallExpr =
@@ -677,8 +672,8 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
     (struct.recordFieldList, struct.tupleFieldList) match {
       case (Some(recordFieldList), _) =>
         Ast(typeDeclForStruct(struct)).withChildren(visitRecordFieldList(recordFieldList))
-      case (None, Some(_)) =>
-        notHandledYet(struct)
+      case (None, Some(tupleFieldList)) =>
+        Ast(typeDeclForStruct(struct)).withChildren(visitTupleFieldList(tupleFieldList))
       case (None, None) =>
         Ast(typeDeclForStruct(struct))
     }
@@ -695,6 +690,19 @@ trait RustVisitor(implicit withValidationMode: ValidationMode) { this: AstCreato
   //  Name ':' Type ('=' default_val:ConstArg)?
   private def visitRecordField(recordField: RecordField): Ast = {
     Ast(memberNode(recordField, code(recordField.name), code(recordField), typeFullNameForType(recordField.`type`)))
+  }
+
+  // TupleFieldList =
+  //  '(' fields:(TupleField (',' TupleField)* ','?)? ')'
+  private def visitTupleFieldList(tupleFieldList: TupleFieldList): Seq[Ast] = {
+    tupleFieldList.tupleField.zipWithIndex.map { case (tupleField, index) => visitTupleField(tupleField, index) }
+  }
+
+  // TupleField =
+  //  Attr* Visibility?
+  //  Type
+  private def visitTupleField(tupleField: TupleField, index: Int): Ast = {
+    Ast(memberNode(tupleField, index.toString, code(tupleField), typeFullNameForType(tupleField.`type`)))
   }
 
 }

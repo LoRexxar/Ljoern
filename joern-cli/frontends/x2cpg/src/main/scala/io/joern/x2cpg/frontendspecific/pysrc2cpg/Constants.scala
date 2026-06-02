@@ -17,4 +17,9 @@ object Constants {
 
 object PythonOperators {
   val slice: String = "<operator>.slice"
+  val listComprehension: String = "<operator>.listComprehension"
+  val dictComprehension: String = "<operator>.dictComprehension"
+  val setComprehension: String  = "<operator>.setComprehension"
+  val genComprehension: String  = "<operator>.genComprehension"
+  val dictLiteralWithUnpack: String = "<operator>.dictLiteralWithUnpack"
 }

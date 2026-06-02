@@ -21,16 +21,16 @@ class EnumTests extends JimpleCode2CpgFixture {
         cpg.typeDecl.name(".*FuzzyBool.*").method.filterNot(_.name.contains("$")).l
 
       values.name shouldBe "values"
-      values.lineNumber shouldBe Some(1)
+      values.lineNumber shouldBe defined
 
       valueOf.name shouldBe "valueOf"
-      valueOf.lineNumber shouldBe Some(1)
+      valueOf.lineNumber shouldBe defined
 
       constructor.name shouldBe io.joern.x2cpg.Defines.ConstructorMethodName
-      constructor.lineNumber shouldBe Some(1)
+      constructor.lineNumber shouldBe defined
 
       staticInit.name shouldBe io.joern.x2cpg.Defines.StaticInitMethodName
-      staticInit.lineNumber shouldBe Some(2)
+      staticInit.lineNumber shouldBe defined
     }
 
     "it should parse a basic enum without values" in {

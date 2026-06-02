@@ -100,21 +100,25 @@ class JarTypeSolverBuilder(enableVerboseTypeLogging: Boolean) {
   // A map of module name -> exported package names
   private val exportedPackages: mutable.Map[String, List[String]] = mutable.Map.empty
   private val ownedCloseables: mutable.ArrayBuffer[AutoCloseable] = mutable.ArrayBuffer.empty
+  private var indexAllowlistPrefixes: Seq[String]                 = Seq.empty
 
   /** Build a solver that owns its classpath resources and closes them when [[JarTypeSolver.close]] is called. */
-  def build: JarTypeSolver =
-    new JarTypeSolver(classPool, knownPackagePrefixes.toSet, exportedPackages.toMap, ownedCloseables.toSeq)
+  def build: JarTypeSolver = new JarTypeSolver(classPool, knownPackagePrefixes.toSet, exportedPackages.toMap, ownedCloseables.toSeq)
 
   /** Build a solver that does NOT own the classpath resources (used for cached builders whose resources must outlive
     * any single solver instance).
     */
-  private[typesolvers] def buildShared: JarTypeSolver =
-    new JarTypeSolver(classPool, knownPackagePrefixes.toSet, exportedPackages.toMap)
+  private[typesolvers] def buildShared: JarTypeSolver = new JarTypeSolver(classPool, knownPackagePrefixes.toSet, exportedPackages.toMap)
+
+  def withIndexAllowlistPrefixes(prefixes: Seq[String]): JarTypeSolverBuilder = {
+    indexAllowlistPrefixes = prefixes.distinct
+    this
+  }
 
   private def addPathToClassPool(archivePath: String): Try[BytecodeIndexedClassPath] = {
     if (archivePath.isJarPath || archivePath.isJmodPath) {
       Try {
-        val classPath = new BytecodeIndexedClassPath(archivePath)
+        val classPath = new BytecodeIndexedClassPath(archivePath, allowlist = indexAllowlistPrefixes)
         classPool.appendClassPath(classPath)
         ownedCloseables += classPath
         classPath
@@ -220,11 +224,13 @@ object JarTypeSolver {
   def fromPath(
     inputPath: String,
     useCache: Boolean = false,
-    enableVerboseTypeLogging: Boolean = false
+    enableVerboseTypeLogging: Boolean = false,
+    indexAllowlistPrefixes: Seq[String] = Seq.empty
   ): JarTypeSolver = {
     def createBuilder: JarTypeSolverBuilder = {
       val jarPaths = determineJarPathsAllowEmpty(inputPath)
       val builder  = new JarTypeSolverBuilder(enableVerboseTypeLogging)
+        .withIndexAllowlistPrefixes(indexAllowlistPrefixes)
       if (jarPaths.nonEmpty) {
         logger.info(s"JDK type solver: using ${jarPaths.size} jar/jmod archive(s) under $inputPath")
         builder.withJars(jarPaths)
@@ -249,7 +255,9 @@ object JarTypeSolver {
       }
     }
     if (useCache) {
-      cache.getOrElseUpdate(inputPath, createBuilder).buildShared
+      val allowlistKey = Integer.toHexString(indexAllowlistPrefixes.sorted.mkString(",").hashCode)
+      val cacheKey     = if (indexAllowlistPrefixes.isEmpty) inputPath else s"$inputPath|$allowlistKey"
+      cache.getOrElseUpdate(cacheKey, createBuilder).buildShared
     } else {
       createBuilder.build
     }

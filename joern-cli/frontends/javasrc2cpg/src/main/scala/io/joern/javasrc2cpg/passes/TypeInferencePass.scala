@@ -13,6 +13,7 @@ import scala.jdk.OptionConverters.RichOptional
 import io.joern.x2cpg.Defines.UnresolvedNamespace
 import io.shiftleft.codepropertygraph.generated.PropertyNames
 import io.joern.javasrc2cpg.typesolvers.TypeInfoCalculator.{PrimitiveTypes, TypeConstants}
+import io.joern.x2cpg.utils.CanonicalName
 
 class TypeInferencePass(cpg: Cpg) extends ForkJoinParallelCpgPass[Call](cpg) {
 
@@ -21,6 +22,9 @@ class TypeInferencePass(cpg: Cpg) extends ForkJoinParallelCpgPass[Call](cpg) {
     .filterNot(_.fullName.startsWith(Defines.UnresolvedNamespace))
     .filterNot(_.signature.startsWith(Defines.UnresolvedSignature))
     .groupBy(_.name)
+    .view
+    .mapValues(methods => methods.groupBy(_.parameter.size))
+    .toMap
 
   private case class NameParts(typeDecl: Option[String], signature: String)
 
@@ -82,7 +86,12 @@ class TypeInferencePass(cpg: Cpg) extends ForkJoinParallelCpgPass[Call](cpg) {
     val callKey  = s"${call.methodFullName}:$argTypes"
     cache.get(callKey).toScala.getOrElse {
       val callNameParts = getNameParts(call.name, call.methodFullName)
-      resolvedMethodIndex.get(call.name).flatMap { candidateMethods =>
+      resolvedMethodIndex.get(call.name).flatMap { candidateMethodsByArity =>
+        val argCount = call.argument.size
+        val candidateMethods =
+          candidateMethodsByArity.getOrElse(argCount, Nil) ++
+            Option.when(argCount > 0)(candidateMethodsByArity.getOrElse(argCount - 1, Nil)).getOrElse(Nil)
+
         val candidateMethodsIter = candidateMethods.iterator
         val uniqueMatchingMethod =
           candidateMethodsIter.find(isMatchingMethod(_, call, callNameParts)).flatMap { method =>
@@ -98,9 +107,9 @@ class TypeInferencePass(cpg: Cpg) extends ForkJoinParallelCpgPass[Call](cpg) {
 
   override def runOnPart(diffGraph: DiffGraphBuilder, call: Call): Unit = {
     getReplacementMethod(call).foreach { replacementMethod =>
-      diffGraph.setNodeProperty(call, PropertyNames.MethodFullName, replacementMethod.fullName)
-      diffGraph.setNodeProperty(call, PropertyNames.Signature, replacementMethod.signature)
-      diffGraph.setNodeProperty(call, PropertyNames.TypeFullName, replacementMethod.methodReturn.typeFullName)
+      diffGraph.setNodeProperty(call, PropertyNames.MethodFullName, CanonicalName.normalizeMethodFullName(replacementMethod.fullName))
+      diffGraph.setNodeProperty(call, PropertyNames.Signature, CanonicalName.normalizeSignature(replacementMethod.signature))
+      diffGraph.setNodeProperty(call, PropertyNames.TypeFullName, CanonicalName.normalizeTypeFullName(replacementMethod.methodReturn.typeFullName))
     }
   }
 }

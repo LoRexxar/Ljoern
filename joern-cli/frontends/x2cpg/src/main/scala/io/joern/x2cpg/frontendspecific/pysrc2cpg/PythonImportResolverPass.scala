@@ -116,9 +116,9 @@ class PythonImportResolverPass(cpg: Cpg) extends XImportResolverPass(cpg) {
     }
 
     expEntity.split(pathSep).reverse.toList match {
-      case name :: Nil => toUnresolvedImport(s"$name.py:${Constants.moduleName}")
+      case name :: Nil => toUnresolvedImport(name)
       case name :: xs =>
-        toUnresolvedImport(s"${xs.reverse.mkString(JFile.separator)}.py:${Constants.moduleName}$pathSep$name")
+        toUnresolvedImport(s"${xs.reverse.mkString(pathSep.toString)}$pathSep$name")
       case Nil => Set.empty
     }
   }

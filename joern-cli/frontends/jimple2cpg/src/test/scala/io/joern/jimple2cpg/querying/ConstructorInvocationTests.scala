@@ -230,7 +230,7 @@ class ConstructorInvocationTests extends JimpleCode2CpgFixture {
         obj.argumentIndex shouldBe 0
         obj.typeFullName shouldBe "Bar"
 
-        additionResultPointer.code shouldBe "$stack3"
+        additionResultPointer.code shouldBe "x + y"
 
       case res => fail(s"Expected Bar constructor but found $res")
     }

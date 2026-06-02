@@ -1,6 +1,7 @@
 package io.joern.jimple2cpg.astcreation.declarations
 
 import io.joern.jimple2cpg.astcreation.AstCreator
+import io.joern.x2cpg.utils.CanonicalName
 import io.joern.x2cpg.{Ast, ValidationMode}
 import io.shiftleft.codepropertygraph.generated.*
 import io.shiftleft.codepropertygraph.generated.nodes.*
@@ -15,7 +16,7 @@ trait AstForTypeDeclsCreator(implicit withSchemaValidation: ValidationMode) { th
   /** Creates the AST root for type declarations and acts as the entry point for method generation.
     */
   protected def astForTypeDecl(typ: RefType, namespaceBlockFullName: String): Ast = {
-    val fullName  = registerType(typ.toQuotedString)
+    val fullName  = registerType(CanonicalName.normalizeTypeFullName(typ.toQuotedString))
     val shortName = typ.getSootClass.getShortJavaStyleName
     val clz       = typ.getSootClass
     val code      = new mutable.StringBuilder()
@@ -87,11 +88,11 @@ trait AstForTypeDeclsCreator(implicit withSchemaValidation: ValidationMode) { th
     */
   private def inheritedAndImplementedClasses(clazz: SootClass): (List[String], List[String]) = {
     val implementsTypeFullName = clazz.getInterfaces.asScala.map { (i: SootClass) =>
-      registerType(i.getType.toQuotedString)
+      registerType(CanonicalName.normalizeTypeFullName(i.getType.toQuotedString))
     }.toList
     val inheritsFromTypeFullName =
       if (clazz.hasSuperclass && clazz.getSuperclass.getType.toQuotedString != "java.lang.Object") {
-        List(registerType(clazz.getSuperclass.getType.toQuotedString))
+        List(registerType(CanonicalName.normalizeTypeFullName(clazz.getSuperclass.getType.toQuotedString)))
       } else if (implementsTypeFullName.isEmpty) {
         List(registerType("java.lang.Object"))
       } else List()

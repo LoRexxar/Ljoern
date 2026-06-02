@@ -22,6 +22,7 @@ import com.github.javaparser.resolution.types.parametrization.ResolvedTypeParame
 import io.joern.javasrc2cpg.astcreation.{AstCreator, ExpectedType}
 import io.joern.javasrc2cpg.typesolvers.TypeInfoCalculator.TypeConstants
 import io.joern.javasrc2cpg.util.Util.*
+import io.joern.x2cpg.utils.CanonicalName
 import io.joern.x2cpg.{Ast, Defines}
 import io.shiftleft.codepropertygraph.generated.nodes.{
   AstNodeNew,
@@ -87,16 +88,18 @@ private[declarations] trait AstForMethodsCreator { this: AstCreator =>
 
     val parameterAsts  = astsForParameterList(methodDeclaration.getParameters.asScala.toList)
     val parameterTypes = argumentTypesForMethodLike(maybeResolved)
-    val signature      = composeSignature(returnTypeFullName, parameterTypes, parameterAsts.size)
-    val namespaceName  = scope.enclosingTypeDecl.fullName.getOrElse(Defines.UnresolvedNamespace)
-    val methodFullName = composeMethodFullName(namespaceName, methodDeclaration.getNameAsString, signature)
+    val signatureRaw      = composeSignature(returnTypeFullName, parameterTypes, parameterAsts.size)
+    val signature         = CanonicalName.normalizeSignature(signatureRaw)
+    val namespaceNameRaw  = scope.enclosingTypeDecl.fullName.getOrElse(Defines.UnresolvedNamespace)
+    val methodFullNameRaw = composeMethodFullName(namespaceNameRaw, methodDeclaration.getNameAsString, signatureRaw)
+    val methodFullName    = CanonicalName.normalizeMethodFullName(methodFullNameRaw)
 
     methodNode
       .fullName(methodFullName)
       .signature(signature)
 
     val thisNode = Option.when(!methodDeclaration.isStatic) {
-      val typeFullName = scope.enclosingTypeDecl.fullName
+      val typeFullName = scope.enclosingTypeDecl.fullName.map(CanonicalName.normalizeTypeFullName)
       thisNodeForMethod(methodDeclaration, typeFullName)
     }
     val thisAst = thisNode.map(Ast(_)).toList
@@ -115,7 +118,7 @@ private[declarations] trait AstForMethodsCreator { this: AstCreator =>
     val methodReturn =
       methodReturnNode(
         methodDeclaration.getType,
-        returnTypeFullName.getOrElse(defaultTypeFallback(methodDeclaration.getType))
+        CanonicalName.normalizeTypeFullName(returnTypeFullName.getOrElse(defaultTypeFallback(methodDeclaration.getType)))
       )
 
     val annotationAsts = methodDeclaration.getAnnotations.asScala.map(astForAnnotationExpr).toSeq
